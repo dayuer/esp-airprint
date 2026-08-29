@@ -14,6 +14,8 @@
 
 static const char *TAG = "usb_prn";
 
+static void pjl_task(void *a);   /* 任务包装：跑完必须 vTaskDelete，否则复位 */
+
 #define PIN_LED_GREEN   GPIO_NUM_15
 #define CHUNK_SIZE      8192
 
@@ -107,6 +109,9 @@ static void enum_task(void *a)
         ESP_LOGI(TAG, "打印机就绪 VID=0x%04X PID=0x%04X 出=0x%02X/%u 入=0x%02X/%u",
                  dd->idVendor, dd->idProduct, ep, mps, ep_in, mps_in);
         lcd_ui_prn("HP 136a 已连接");
+        /* 开机不自动跑 PJL 探针：它会让整机重启循环，先保稳定。
+         * 已确认 @PJL INFO ID 能拿到 "HP Laser MFP 136a"，说明通道可用，
+         * 后面做成按需触发（网页点一下）并彻底隔离，不再影响主流程。 */
     }
 }
 
@@ -316,6 +321,104 @@ static void interface_cycle(void)
 
     vTaskDelay(pdMS_TO_TICKS(300));
     s_in_paused = false;
+}
+
+/* ---- PJL 查询探针 ----
+ * 往 bulk OUT 发 PJL 命令，再从 bulk IN 读回文本。三星系引擎多半支持
+ * @PJL INFO 系列，能拿到机型、状态、耗材余量。 */
+static int pjl_read(char *out, int cap, int total_ms)
+{
+    if (!s_ep_in) return 0;
+    usb_transfer_t *x;
+    if (usb_host_transfer_alloc(512, 0, &x) != ESP_OK) return 0;
+    int len = 0, waited = 0;
+    while (waited < total_ms && len < cap - 1) {
+        x->device_handle    = s_dev;
+        x->bEndpointAddress = s_ep_in;
+        x->callback         = in_cb;
+        x->num_bytes        = 512;
+        x->timeout_ms       = 800;
+        if (usb_host_transfer_submit(x) != ESP_OK) break;
+        if (xSemaphoreTake(s_in_done, pdMS_TO_TICKS(1500)) != pdTRUE) break;
+        waited += 800;
+        if (s_in_status == USB_TRANSFER_STATUS_COMPLETED && x->actual_num_bytes > 0) {
+            int n = x->actual_num_bytes;
+            if (n > cap - 1 - len) n = cap - 1 - len;
+            memcpy(out + len, x->data_buffer, n);
+            len += n;
+            waited = 0;                      /* 还在出数据就继续等 */
+        }
+    }
+    out[len] = 0;
+    usb_host_transfer_free(x);
+    return len;
+}
+
+void usb_printer_pjl_probe(void)
+{
+    /* INFO ID 已证实有回应。STATUS/SUPPLIES 没回，试几种常见写法：
+     * 有些固件要求先发一行裸 @PJL 进入 PJL 上下文才认后续查询。 */
+    static const char *queries[] = {
+        "@PJL INFO ID",
+        "@PJL\r\n@PJL INFO STATUS",
+        "@PJL\r\n@PJL INFO SUPPLIES",
+        "@PJL\r\n@PJL INFO PAGECOUNT",
+        "@PJL\r\n@PJL INFO VARIABLES",
+        "@PJL\r\n@PJL INFO PRODINFO",
+        "@PJL\r\n@PJL INFO MEMORY",
+        "@PJL\r\n@PJL USTATUS DEVICE=ON",
+    };
+    if (!s_connected) { ESP_LOGW(TAG, "PJL 探针：打印机未连接"); return; }
+
+    xSemaphoreTake(s_job_mutex, portMAX_DELAY);
+    s_in_paused = true;
+    for (int i = 0; i < 100 && !s_in_idle; i++) vTaskDelay(pdMS_TO_TICKS(20));
+
+    char *resp = malloc(1400);
+    if (!resp) { s_in_paused = false; xSemaphoreGive(s_job_mutex); return; }
+
+    for (size_t q = 0; q < sizeof queries / sizeof queries[0]; q++) {
+        char cmd[96];
+        int n = snprintf(cmd, sizeof cmd, "\x1b%%-12345X%s\r\n", queries[q]);
+        s_job_bytes = 0; s_job_crc = 0;
+        if (usb_printer_job_write((const uint8_t *)cmd, n) != ESP_OK) {
+            ESP_LOGW(TAG, "PJL 发送失败: %s", queries[q]);
+            continue;
+        }
+        int got = pjl_read(resp, 1400, 2500);
+        if (got <= 0) {
+            ESP_LOGW(TAG, "PJL %s → 无回应", queries[q]);
+            continue;
+        }
+        ESP_LOGI(TAG, "PJL %s → %d 字节:", queries[q], got);
+        /* 逐行打出来，日志一行别太长 */
+        char *line = resp;
+        for (char *c = resp; *c; c++) {
+            if (*c == '\r' || *c == '\n' || *c == '\f') {
+                *c = 0;
+                if (line[0]) ESP_LOGI(TAG, "  | %s", line);
+                line = c + 1;
+            }
+        }
+        if (line[0]) ESP_LOGI(TAG, "  | %s", line);
+    }
+    free(resp);
+
+    /* 收尾：UEL 让打印机退出 PJL 上下文 */
+    s_job_bytes = 0;
+    usb_printer_job_write((const uint8_t *)"\x1b%-12345X", 9);
+    s_job_bytes = 0; s_job_crc = 0;
+
+    s_in_paused = false;
+    xSemaphoreGive(s_job_mutex);
+    ESP_LOGI(TAG, "PJL 探针结束");
+}
+
+static void pjl_task(void *a)
+{
+    vTaskDelay(pdMS_TO_TICKS(1200));      /* 等打印机自己就绪 */
+    usb_printer_pjl_probe();
+    vTaskDelete(NULL);                    /* 少这一句 = 必崩重启 */
 }
 
 void usb_printer_start(void)

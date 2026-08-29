@@ -14,13 +14,15 @@
 #include "driver/gpio.h"
 #include "mdns.h"
 #include "usb_printer.h"
-#include "wifi_creds.h"
+#include "provision.h"
 #include "lcd_ui.h"
+#include "driver/gpio.h"
 #include "esp_system.h"
 
 static const char *TAG = "bridge";
 static EventGroupHandle_t s_evt;
 static char s_ip[16];
+static char s_ssid[33], s_pass[65];
 #define EVT_GOT_IP BIT0
 
 static void start_mdns(const uint8_t mac[6]);
@@ -116,6 +118,13 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
         wifi_event_sta_disconnected_t *d = data;
         ESP_LOGW(TAG, "Wi-Fi 断开 reason=%d rssi=%d，重连", d->reason, d->rssi);
         lcd_ui_wifi("重连中");
+        /* 从未连上过且连错 12 次：多半是换了路由器或改了密码，回配网模式 */
+        static int fails;
+        if (!s_ip[0] && ++fails >= 12) {
+            ESP_LOGE(TAG, "始终连不上，清配置重启进配网");
+            prov_erase();
+            esp_restart();
+        }
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = data;
@@ -139,9 +148,28 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    /* 先连 Wi-Fi：此阶段 USB-Serial/JTAG 仍在，DEV 口全程可见日志 */
+    /* 开机按住 MENU 键 = 清空 Wi-Fi 配置重新配网 */
+    gpio_config_t btn = { .pin_bit_mask = BIT64(GPIO_NUM_14),
+                          .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE };
+    gpio_config(&btn);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (gpio_get_level(GPIO_NUM_14) == 0) {
+        ESP_LOGW(TAG, "检测到 MENU 键按下——清空 Wi-Fi 配置");
+        lcd_ui_wifi("已清空配置");
+        prov_erase();
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* 没有保存过凭据就先进配网门户（内部配好会自动重启，不会返回） */
+    if (!prov_load(s_ssid, sizeof s_ssid, s_pass, sizeof s_pass)) {
+        ESP_LOGW(TAG, "无 Wi-Fi 配置，进入配网模式");
+        prov_portal_run();
+    }
+    ESP_LOGI(TAG, "已读取配置：SSID=\"%s\"", s_ssid);
+
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t wc = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&wc));
@@ -149,8 +177,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL));
 
     wifi_config_t sta = { 0 };
-    strlcpy((char *)sta.sta.ssid, WIFI_SSID, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, WIFI_PASS, sizeof(sta.sta.password));
+    strlcpy((char *)sta.sta.ssid, s_ssid, sizeof(sta.sta.ssid));
+    strlcpy((char *)sta.sta.password, s_pass, sizeof(sta.sta.password));
     sta.sta.threshold.authmode = WIFI_AUTH_WPA_PSK;
     sta.sta.pmf_cfg.capable = true;
     sta.sta.pmf_cfg.required = false;
@@ -166,7 +194,7 @@ void app_main(void)
     esp_wifi_set_max_tx_power(52);
 
     /* 一次性诊断：把叫这个名字的所有 BSS 打出来 */
-    wifi_scan_config_t sc = { .ssid = (uint8_t *)WIFI_SSID };
+    wifi_scan_config_t sc = { .ssid = (uint8_t *)s_ssid };
     if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
         uint16_t n = 10;
         wifi_ap_record_t recs[10];
@@ -177,7 +205,7 @@ void app_main(void)
                      recs[i].bssid[3], recs[i].bssid[4], recs[i].bssid[5],
                      recs[i].primary, recs[i].rssi, recs[i].authmode, recs[i].ftm_responder);
     }
-    ESP_LOGI(TAG, "连接 Wi-Fi \"%s\"…", WIFI_SSID);
+    ESP_LOGI(TAG, "连接 Wi-Fi \"%s\"…", s_ssid);
     xTaskCreate(services_task, "svc", 8192, NULL, 4, NULL);
 
     EventBits_t bits = xEventGroupWaitBits(s_evt, EVT_GOT_IP, pdFALSE, pdFALSE,

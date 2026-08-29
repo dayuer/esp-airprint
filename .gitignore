@@ -3,3 +3,5 @@ managed_components/
 sdkconfig
 sdkconfig.old
 main/wifi_creds.h
+nvs.bin
+nvs.csv
