@@ -26,3 +26,7 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
 # LCD 中文
+
+# socket 池：默认 10 个，被监听+轮询连接+netlog+mDNS 占满后 accept 拿不到新 socket，
+# 客户端表现为「连接超时」。提到上限 16。
+CONFIG_LWIP_MAX_SOCKETS=16

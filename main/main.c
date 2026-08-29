@@ -14,7 +14,10 @@
 #include "driver/gpio.h"
 #include "mdns.h"
 #include "usb_printer.h"
+#include "joblog.h"
 #include "provision.h"
+#include "usb_printer.h"
+#include "joblog.h"
 #include "lcd_ui.h"
 #include "driver/gpio.h"
 #include "esp_system.h"
@@ -36,8 +39,15 @@ static void services_task(void *arg)
     netlog_start();
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    start_mdns(mac);
+
+    /* IPP 服务先起，但 mDNS 广播要等打印机真的就绪——否则客户端会在
+     * 桥还没准备好时就来试作业，被拒一次就把这台打印机拉黑。 */
     ipp_server_start(s_ip, mac);
+    for (int i = 0; i < 60 && !usb_printer_connected(); i++)
+        vTaskDelay(pdMS_TO_TICKS(500));
+    ESP_LOGI(TAG, "打印机%s，开始广播", usb_printer_connected() ? "已就绪" : "未就绪(超时)");
+    start_mdns(mac);
+    joblog_boot_report();
     ESP_LOGI(TAG, "网络服务全部就绪");
     lcd_ui_log("mDNS+IPP 服务已就绪");
     vTaskDelete(NULL);
@@ -75,17 +85,18 @@ static void start_mdns(const uint8_t mac[6])
 {
     char uuid[48];
     /* 必须合法十六进制，且与 IPP 的 printer-uuid 完全一致 */
-    snprintf(uuid, sizeof uuid, "e5932b71-d6e0-4917-8a%02x-%02x%02x%02x%02x%02x%02x",
+    /* 换了 UUID 前缀：iOS 按 UUID 认打印机，改掉才能绕开它缓存里的旧记录 */
+    snprintf(uuid, sizeof uuid, "a7d41f60-9c2b-4e83-b1%02x-%02x%02x%02x%02x%02x%02x",
              mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     esp_err_t err = mdns_init();
     if (err != ESP_OK) { ESP_LOGE(TAG, "mdns_init: %s", esp_err_to_name(err)); return; }
     mdns_hostname_set("hp136a-bridge");
-    mdns_instance_name_set("HP Laser MFP 136a");
+    mdns_instance_name_set("HP 136a Bridge");
     mdns_txt_item_t txt[] = {
         {"txtvers",  "1"},
         {"qtotal",   "1"},
         {"rp",       "ipp/print"},
-        {"ty",       "HP Laser MFP 136a (ESP32 bridge)"},
+        {"ty",       "HP 136a Bridge"},
         {"product",  "(HP Laser MFP 136a)"},
         {"note",     "USB bridge"},
         {"adminurl", "http://hp136a-bridge.local./"},
@@ -101,10 +112,10 @@ static void start_mdns(const uint8_t mac[6])
         {"PaperMax", "legal-A4"},
         {"air",      "none"},
     };
-    err = mdns_service_add("HP Laser MFP 136a", "_ipp", "_tcp", 631,
+    err = mdns_service_add("HP 136a Bridge", "_ipp", "_tcp", 631,
                            txt, sizeof(txt)/sizeof(txt[0]));
     if (err != ESP_OK) ESP_LOGE(TAG, "service_add: %s", esp_err_to_name(err));
-    err = mdns_service_subtype_add_for_host("HP Laser MFP 136a",
+    err = mdns_service_subtype_add_for_host("HP 136a Bridge",
                            "_ipp", "_tcp", NULL, "_universal");
     if (err != ESP_OK) ESP_LOGE(TAG, "subtype_add: %s", esp_err_to_name(err));
     ESP_LOGI(TAG, "mDNS 已广播 _ipp._tcp + _universal 子类型");
