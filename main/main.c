@@ -15,6 +15,7 @@
 #include "mdns.h"
 #include "usb_printer.h"
 #include "wifi_creds.h"
+#include "lcd_ui.h"
 
 static const char *TAG = "bridge";
 static EventGroupHandle_t s_evt;
@@ -35,6 +36,7 @@ static void services_task(void *arg)
     start_mdns(mac);
     ipp_server_start(s_ip, mac);
     ESP_LOGI(TAG, "网络服务全部就绪");
+    lcd_ui_log("mDNS+IPP 服务已就绪");
     vTaskDelete(NULL);
 }
 
@@ -110,11 +112,13 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = data;
         ESP_LOGW(TAG, "Wi-Fi 断开 reason=%d rssi=%d，重连", d->reason, d->rssi);
+        lcd_ui_wifi("重连中");
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = data;
         snprintf(s_ip, sizeof s_ip, IPSTR, IP2STR(&e->ip_info.ip));
         ESP_LOGI(TAG, "拿到 IP: %s", s_ip);
+        lcd_ui_wifi(s_ip);
         xEventGroupSetBits(s_evt, EVT_GOT_IP);
     }
 }
@@ -122,6 +126,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== ESP32 AirPrint 桥 ===");
+    lcd_ui_init();
     s_evt = xEventGroupCreate();
     esp_err_t r = nvs_flash_init();
     if (r == ESP_ERR_NVS_NO_FREE_PAGES || r == ESP_ERR_NVS_NEW_VERSION_FOUND) {

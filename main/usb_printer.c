@@ -8,6 +8,7 @@
 #include "driver/gpio.h"
 #include "usb/usb_host.h"
 #include "usb_printer.h"
+#include "lcd_ui.h"
 #include "esp_rom_crc.h"
 
 static const char *TAG = "usb_prn";
@@ -77,6 +78,7 @@ static void enum_task(void *a)
             if (s_dev) { usb_host_interface_release(s_client, s_dev, s_itf);
                          usb_host_device_close(s_client, s_dev); s_dev = NULL; }
             ESP_LOGW(TAG, "打印机已拔出");
+            lcd_ui_prn("已拔出");
             continue;
         }
         if (s_connected) continue;
@@ -96,6 +98,7 @@ static void enum_task(void *a)
         usb_host_get_device_descriptor(dev, &dd);
         ESP_LOGI(TAG, "打印机就绪 VID=0x%04X PID=0x%04X ep=0x%02X mps=%u",
                  dd->idVendor, dd->idProduct, ep, mps);
+        lcd_ui_prn("HP 136a 已连接");
     }
 }
 
@@ -175,5 +178,10 @@ void usb_printer_job_end(void)
             xSemaphoreTake(s_xfer_done, portMAX_DELAY);
     }
     ESP_LOGI(TAG, "作业结束，共 %u 字节 CRC32=%08x", (unsigned)s_job_bytes, (unsigned)s_job_crc);
+    {
+        char t[40];
+        snprintf(t, sizeof t, "%u 字节 已送打印机", (unsigned)s_job_bytes);
+        lcd_ui_job(t);
+    }
     xSemaphoreGive(s_job_mutex);
 }

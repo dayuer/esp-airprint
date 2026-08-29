@@ -26,6 +26,7 @@ typedef struct {
     long cl_remaining;      /* Content-Length 模式剩余 */
     long ck_remaining;      /* 当前 chunk 剩余 */
     bool eof;
+    long consumed;
     uint8_t buf[2048];
     int  pos, len;
 } body_t;
@@ -37,6 +38,7 @@ static int raw_byte(body_t *b)
         if (n <= 0) return -1;
         b->pos = 0; b->len = n;
     }
+    b->consumed++;
     return b->buf[b->pos++];
 }
 
@@ -71,6 +73,7 @@ static int body_read(body_t *b, uint8_t *out, int want)
             }
         }
         b->cl_remaining -= got;
+        b->consumed += got;
         if (b->cl_remaining == 0) b->eof = true;
         return got;
     }
@@ -95,6 +98,7 @@ static int body_read(body_t *b, uint8_t *out, int want)
         if (got <= 0) { b->eof = true; return 0; }
     }
     b->ck_remaining -= got;
+    b->consumed += got;
     if (b->ck_remaining == 0) { raw_byte(b); raw_byte(b); }   /* 吃掉 chunk 尾 \r\n */
     return got;
 }
@@ -122,6 +126,36 @@ static void ob_more_str(obuf_t *o, uint8_t tag, const char *v){ ob_u8(o,tag); ob
 static void ob_more_int(obuf_t *o, uint8_t tag, uint32_t v){ uint8_t b[4]={v>>24,v>>16,v>>8,v}; ob_u8(o,tag); ob_u16(o,0); ob_u16(o,4); ob_raw(o,b,4); }
 static void ob_more_reso(obuf_t *o, uint32_t x, uint32_t y)
 { uint8_t b[9]={x>>24,x>>16,x>>8,x,y>>24,y>>16,y>>8,y,3}; ob_u8(o,0x32); ob_u16(o,0); ob_u16(o,9); ob_raw(o,b,9); }
+
+/* ---- IPP 集合（collection）编码 ---- */
+static void col_begin_named(obuf_t *o, const char *name)
+{ ob_u8(o,0x34); ob_u16(o,strlen(name)); ob_raw(o,name,strlen(name)); ob_u16(o,0); }
+static void col_begin_anon(obuf_t *o)
+{ ob_u8(o,0x34); ob_u16(o,0); ob_u16(o,0); }
+static void col_member(obuf_t *o, const char *m)
+{ ob_u8(o,0x4A); ob_u16(o,0); ob_u16(o,strlen(m)); ob_raw(o,m,strlen(m)); }
+static void col_end(obuf_t *o)
+{ ob_u8(o,0x37); ob_u16(o,0); ob_u16(o,0); }
+static void col_val_int(obuf_t *o, uint32_t v)
+{ uint8_t b[4]={v>>24,v>>16,v>>8,v}; ob_u8(o,0x21); ob_u16(o,0); ob_u16(o,4); ob_raw(o,b,4); }
+static void col_val_kw(obuf_t *o, const char *v)
+{ ob_u8(o,0x44); ob_u16(o,0); ob_u16(o,strlen(v)); ob_raw(o,v,strlen(v)); }
+
+/* 一个完整 media-col 集合体（不含 beg/end 之外的名字）：尺寸单位 1/100mm */
+static void media_col_body(obuf_t *o, uint32_t x, uint32_t y)
+{
+    col_member(o, "media-size");
+    col_begin_anon(o);
+    col_member(o, "x-dimension"); col_val_int(o, x);
+    col_member(o, "y-dimension"); col_val_int(o, y);
+    col_end(o);
+    col_member(o, "media-top-margin");    col_val_int(o, 423);
+    col_member(o, "media-bottom-margin"); col_val_int(o, 423);
+    col_member(o, "media-left-margin");   col_val_int(o, 423);
+    col_member(o, "media-right-margin");  col_val_int(o, 423);
+    col_member(o, "media-source"); col_val_kw(o, "main");
+    col_member(o, "media-type");   col_val_kw(o, "stationery");
+}
 
 static void ob_op_group(obuf_t *o)
 {
@@ -161,6 +195,7 @@ static bool ipp_eat_attrs(body_t *b, uint16_t *op, uint32_t *reqid)
 static char s_uri[64];
 static char s_uuid[64];
 static int  s_jobid = 0;
+static volatile int s_job_state = 9;   /* IPP: 3=pending 5=processing 7=canceled 8=aborted 9=completed */
 
 static void resp_printer_attrs(obuf_t *o, uint32_t reqid)
 {
@@ -212,6 +247,17 @@ static void resp_printer_attrs(obuf_t *o, uint32_t reqid)
     ob_more_str(b, 0x44, "CP1"); ob_more_str(b, 0x44, "IS1");
     ob_more_str(b, 0x44, "OB10"); ob_more_str(b, 0x44, "PQ4");
     ob_more_str(b, 0x44, "RS300"); ob_more_str(b, 0x44, "DM1");
+    /* iOS 硬性要求的 media-col 家族 */
+    col_begin_named(b, "media-col-default"); media_col_body(b, 21000, 29700); col_end(b);
+    col_begin_named(b, "media-col-ready");   media_col_body(b, 21000, 29700); col_end(b);
+    col_begin_named(b, "media-col-database"); media_col_body(b, 21000, 29700); col_end(b);
+    col_begin_anon(b); media_col_body(b, 21590, 27940); col_end(b);   /* letter，同属 database 的 1setOf */
+    ob_int(b, 0x21, "media-top-margin-supported", 423);
+    ob_int(b, 0x21, "media-bottom-margin-supported", 423);
+    ob_int(b, 0x21, "media-left-margin-supported", 423);
+    ob_int(b, 0x21, "media-right-margin-supported", 423);
+    ob_str(b, 0x44, "media-source-supported", "main");
+    ob_str(b, 0x44, "media-type-supported", "stationery");
     ob_str(b, 0x45, "printer-uuid", s_uuid);
     ob_str(b, 0x41, "printer-device-id",
         "MFG:HP;CMD:URF,PWGRaster;MDL:HP Laser MFP 136a;CLS:PRINTER;");
@@ -274,10 +320,15 @@ static void http_ipp_reply(int fd, obuf_t *o)
     send_all(fd, o->d, o->len);
 }
 
+static volatile int s_nconn;
+
 static void handle_conn(void *arg)
 {
     int fd = (int)(intptr_t)arg;
     char line[1024];
+    /* 空闲 75 秒自动断开：iOS 的 keep-alive 连接不关，不清会耗尽内存 */
+    struct timeval tv = { .tv_sec = 75 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     uint8_t *rbuf = malloc(4096);      /* IPP 应答，连接私有 */
     uint8_t *dbuf = malloc(8192);      /* 文档转发，连接私有 */
     if (!rbuf || !dbuf) { free(rbuf); free(dbuf); close(fd); vTaskDelete(NULL); return; }
@@ -321,7 +372,8 @@ static void handle_conn(void *arg)
         o.len = 0;
 
         if (!ipp_eat_attrs(&body, &op, &reqid)) { body_drain(&body); goto done; }
-        ESP_LOGI(TAG, "IPP op=0x%04X reqid=%u", op, (unsigned)reqid);
+        ESP_LOGI(TAG, "IPP op=0x%04X reqid=%u cl=%ld chunked=%d attrs=%ld",
+                 op, (unsigned)reqid, content_len, chunked, body.consumed);
 
         switch (op) {
         case 0x000B:                                   /* Get-Printer-Attributes */
@@ -334,11 +386,13 @@ static void handle_conn(void *arg)
             break;
         case 0x0005:                                   /* Create-Job */
             body_drain(&body);
-            resp_job(&o, reqid, ++s_jobid, 4, "job-incoming");
+            s_job_state = 3;                           /* pending：等文档 */
+            resp_job(&o, reqid, ++s_jobid, 3, "none");
             break;
         case 0x0002:                                   /* Print-Job */
         case 0x0006: {                                 /* Send-Document */
             int jid = (op == 0x0002) ? ++s_jobid : s_jobid;
+            s_job_state = 5;                           /* processing */
             if (usb_printer_job_begin() != ESP_OK) {
                 body_drain(&body);
                 resp_simple(&o, reqid, 0x0506);        /* server-error-not-accepting */
@@ -357,7 +411,15 @@ static void handle_conn(void *arg)
             TaskHandle_t pump;
             void pump_fn(void *arg);
             xTaskCreate(pump_fn, "usb_pump", 4096, &ctx, 6, &pump);
+            bool first_chunk = true;
             while ((n = body_read(&body, dbuf, 8192)) > 0) {
+                if (first_chunk) {
+                    first_chunk = false;
+                    char hx[64]; int hl = 0;
+                    for (int i = 0; i < 16 && i < n; i++)
+                        hl += snprintf(hx + hl, sizeof hx - hl, "%02x", dbuf[i]);
+                    ESP_LOGI(TAG, "文档头: %s", hx);
+                }
                 size_t off = 0;
                 while (off < (size_t)n && !usb_fail)
                     off += xStreamBufferSend(sb, dbuf + off, n - off, pdMS_TO_TICKS(1000));
@@ -372,18 +434,27 @@ static void handle_conn(void *arg)
             usb_printer_job_end();
             gpio_set_level(PIN_LED_YELLOW, 0);
             ESP_LOGI(TAG, "作业 %d：%u 字节 %s", jid, (unsigned)total, fail ? "失败" : "完成");
+            s_job_state = fail ? 8 : 9;
             if (fail) { body_drain(&body); resp_simple(&o, reqid, 0x0500); }
             else resp_job(&o, reqid, jid, 9, "job-completed-successfully");
             break;
         }
         case 0x0008:                                   /* Cancel-Job */
             body_drain(&body);
+            if (s_job_state == 3 || s_job_state == 5) s_job_state = 7;
             resp_simple(&o, reqid, 0x0000);
             break;
-        case 0x0009:                                   /* Get-Job-Attributes */
+        case 0x0009: {                                 /* Get-Job-Attributes */
             body_drain(&body);
-            resp_job(&o, reqid, s_jobid ? s_jobid : 1, 9, "job-completed-successfully");
+            int st = s_job_state;
+            const char *rs = (st == 3) ? "none" :
+                             (st == 5) ? "job-printing" :
+                             (st == 7) ? "job-canceled-by-user" :
+                             (st == 8) ? "job-completed-with-errors" :
+                                         "job-completed-successfully";
+            resp_job(&o, reqid, s_jobid ? s_jobid : 1, st, rs);
             break;
+        }
         case 0x000A:                                   /* Get-Jobs -> 空 */
             body_drain(&body);
             resp_simple(&o, reqid, 0x0000);
@@ -397,6 +468,7 @@ static void handle_conn(void *arg)
 done:
     free(rbuf); free(dbuf);
     close(fd);
+    s_nconn--;
     vTaskDelete(NULL);
 }
 
@@ -408,14 +480,17 @@ static void server_task(void *a)
     struct sockaddr_in sa = { .sin_family = AF_INET, .sin_port = htons(IPP_PORT),
                               .sin_addr.s_addr = htonl(INADDR_ANY) };
     bind(ls, (struct sockaddr *)&sa, sizeof sa);
-    listen(ls, 4);
+    listen(ls, 8);
     ESP_LOGI(TAG, "IPP 服务器就绪 :%d", IPP_PORT);
     while (1) {
         int fd = accept(ls, NULL, NULL);
         if (fd < 0) continue;
+        if (s_nconn >= 8) { close(fd); continue; }   /* 并发上限，iOS 会重试 */
         int ka = 1; setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof ka);
-        if (xTaskCreate(handle_conn, "ipp_conn", 12288, (void *)(intptr_t)fd, 5, NULL) != pdPASS)
-            close(fd);
+        s_nconn++;
+        if (xTaskCreate(handle_conn, "ipp_conn", 12288, (void *)(intptr_t)fd, 5, NULL) != pdPASS) {
+            close(fd); s_nconn--;
+        }
     }
 }
 
