@@ -51,7 +51,7 @@ typedef struct {
 static int raw_byte(body_t *b)
 {
     if (b->pos >= b->len) {
-        int n = sock_recv(b->fd, b->buf, 2048);
+        int n = sock_recv(b->fd, b->buf, 1024);
         if (n <= 0) return -1;
         b->pos = 0; b->len = n;
     }
@@ -362,7 +362,7 @@ static int send_all(int fd, const void *p, int n)
     return 0;
 }
 
-static bool shedding(void) { return s_nconn >= 6; }   /* 名额吃紧就开始卸载 */
+static bool shedding(void) { return s_nconn >= 2; }   /* iPhone 并发爆发很猛，尽早卸载 */
 
 static void http_ipp_reply(int fd, obuf_t *o)
 {
@@ -393,7 +393,7 @@ static void handle_conn(void *arg)
     struct timeval tv = { .tv_sec = 8 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     uint8_t *rbuf = malloc(1024);
-    uint8_t *bodybuf = malloc(2048);
+    uint8_t *bodybuf = malloc(1024);
     uint8_t *dbuf = NULL;
     if (!rbuf || !bodybuf) {
         ESP_LOGE(TAG, "连接缓冲分配失败 堆=%u", (unsigned)esp_get_free_heap_size());
@@ -587,7 +587,7 @@ static void server_task(void *a)
         if (fd < 0) continue;
         /* 绝不 reject：拒绝 accept 会让 iOS 直接判定「打印机不可用」。
          * 名额紧张时靠下面的 Connection: close 主动卸载空闲长连接。 */
-        if (s_nconn >= 14 || esp_get_free_heap_size() < 6000) {
+        if (s_nconn >= 14 || esp_get_free_heap_size() < 9000) {
             ESP_LOGW(TAG, "无奈拒绝：并发=%d 堆=%u", s_nconn,
                      (unsigned)esp_get_free_heap_size());
             close(fd);
@@ -595,7 +595,7 @@ static void server_task(void *a)
         }
         int ka = 1; setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof ka);
         s_nconn++;
-        if (xTaskCreate(handle_conn, "ipp_conn", 5120, (void *)(intptr_t)fd, 5, NULL) != pdPASS) {
+        if (xTaskCreate(handle_conn, "ipp_conn", 4608, (void *)(intptr_t)fd, 5, NULL) != pdPASS) {
             ESP_LOGE(TAG, "建任务失败 并发=%d 堆=%u", s_nconn,
                      (unsigned)esp_get_free_heap_size());
             close(fd); s_nconn--;
