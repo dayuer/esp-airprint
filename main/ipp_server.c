@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/stream_buffer.h"
 #include "lwip/sockets.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -77,8 +78,8 @@ static int body_read(body_t *b, uint8_t *out, int want)
     while (b->ck_remaining == 0) {
         int sz = chunk_head(b);
         if (sz < 0) { b->eof = true; return 0; }
-        if (sz == 0) {                          /* trailer 直到空行 */
-            int c, nl = 0;
+        if (sz == 0) {                          /* trailer 直到空行；chunk_head 已吃掉 "0\r\n" 的 \n，故 nl 从 1 起 */
+            int c, nl = 1;
             while (nl < 2 && (c = raw_byte(b)) >= 0) { if (c=='\n') nl++; else if (c!='\r') nl = 0; }
             b->eof = true; return 0;
         }
@@ -237,6 +238,24 @@ static void resp_simple(obuf_t *o, uint32_t reqid, uint16_t status)
     ob_u8(o, 0x03);
 }
 
+/* USB 泵：从蓄水池尽量大块地喂打印机 */
+struct pump_ctx_s { StreamBufferHandle_t sb; volatile bool *rx_done, *usb_fail, *pump_done; };
+void pump_fn(void *arg)
+{
+    struct pump_ctx_s *c = arg;
+    static uint8_t pbuf[8192];
+    while (1) {
+        size_t got = xStreamBufferReceive(c->sb, pbuf, sizeof pbuf, pdMS_TO_TICKS(200));
+        if (got == 0) {
+            if (*c->rx_done) break;
+            continue;
+        }
+        if (usb_printer_job_write(pbuf, got) != ESP_OK) { *c->usb_fail = true; break; }
+    }
+    *c->pump_done = true;
+    vTaskDelete(NULL);
+}
+
 /* ---------------- HTTP 层 ---------------- */
 static int send_all(int fd, const void *p, int n)
 {
@@ -328,10 +347,28 @@ static void handle_conn(void *arg)
             gpio_set_level(PIN_LED_YELLOW, 1);
             size_t total = 0; bool fail = false;
             int n;
-            while ((n = body_read(&body, dbuf, sizeof dbuf)) > 0) {
-                if (usb_printer_job_write(dbuf, n) != ESP_OK) { fail = true; break; }
+            /* 网络收与 USB 写解耦：96KB 蓄水池抹平 Wi-Fi 抖动，
+             * 打印机的 URF 解码器受不了页内断流 */
+            StreamBufferHandle_t sb = xStreamBufferCreate(96 * 1024, 1);
+            if (!sb) { body_drain(&body); resp_simple(&o, reqid, 0x0500); usb_printer_job_end(); gpio_set_level(PIN_LED_YELLOW, 0); break; }
+            volatile bool rx_done = false, usb_fail = false;
+            volatile bool pump_done = false;
+            struct pump_ctx { StreamBufferHandle_t sb; volatile bool *rx_done, *usb_fail, *pump_done; } ctx = { sb, &rx_done, &usb_fail, &pump_done };
+            TaskHandle_t pump;
+            void pump_fn(void *arg);
+            xTaskCreate(pump_fn, "usb_pump", 4096, &ctx, 6, &pump);
+            while ((n = body_read(&body, dbuf, 8192)) > 0) {
+                size_t off = 0;
+                while (off < (size_t)n && !usb_fail)
+                    off += xStreamBufferSend(sb, dbuf + off, n - off, pdMS_TO_TICKS(1000));
+                if (usb_fail) { fail = true; break; }
                 total += n;
             }
+            rx_done = true;
+            for (int w = 0; w < 1500 && !pump_done; w++)   /* 最多等 30s */
+                vTaskDelay(pdMS_TO_TICKS(20));
+            if (usb_fail || !pump_done) fail = true;
+            vStreamBufferDelete(sb);
             usb_printer_job_end();
             gpio_set_level(PIN_LED_YELLOW, 0);
             ESP_LOGI(TAG, "作业 %d：%u 字节 %s", jid, (unsigned)total, fail ? "失败" : "完成");

@@ -41,8 +41,9 @@ static void sender_task(void *a)
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     int bc = 1;
     setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &bc, sizeof bc);
-    struct sockaddr_in dst = { .sin_family = AF_INET, .sin_port = htons(5140),
-                               .sin_addr.s_addr = htonl(INADDR_BROADCAST) };
+    /* 路由器会滤掉 255.255.255.255 广播——单播直发开发机 */
+    struct sockaddr_in dst = { .sin_family = AF_INET, .sin_port = htons(5140) };
+    dst.sin_addr.s_addr = inet_addr("192.168.3.237");
     logmsg_t m;
     while (1) {
         if (xQueueReceive(s_q, &m, portMAX_DELAY) == pdTRUE)
