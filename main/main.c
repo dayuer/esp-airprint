@@ -16,6 +16,7 @@
 #include "usb_printer.h"
 #include "wifi_creds.h"
 #include "lcd_ui.h"
+#include "esp_system.h"
 
 static const char *TAG = "bridge";
 static EventGroupHandle_t s_evt;
@@ -71,8 +72,9 @@ static void board_usb_host_power(void)
 static void start_mdns(const uint8_t mac[6])
 {
     char uuid[48];
-    snprintf(uuid, sizeof uuid, "e5p32b71-d6e0-4917-%02x%02x-%02x%02x%02x%02x0001",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    /* 必须合法十六进制，且与 IPP 的 printer-uuid 完全一致 */
+    snprintf(uuid, sizeof uuid, "e5932b71-d6e0-4917-8a%02x-%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     esp_err_t err = mdns_init();
     if (err != ESP_OK) { ESP_LOGE(TAG, "mdns_init: %s", esp_err_to_name(err)); return; }
     mdns_hostname_set("hp136a-bridge");
@@ -84,8 +86,9 @@ static void start_mdns(const uint8_t mac[6])
         {"ty",       "HP Laser MFP 136a (ESP32 bridge)"},
         {"product",  "(HP Laser MFP 136a)"},
         {"note",     "USB bridge"},
-        {"pdl",      "image/urf,image/pwg-raster"},
-        {"URF",      "V1.4,W8,SRGB24,CP1,IS1,OB10,PQ4,RS300,DM1"},
+        {"adminurl", "http://hp136a-bridge.local./"},
+        {"pdl",      "image/urf"},
+        {"URF",      "V1.4,W8,CP1,IS1,OB10,PQ4,RS300,DM1"},
         {"Color",    "F"},
         {"Duplex",   "F"},
         {"usb_MFG",  "HP"},
@@ -126,7 +129,9 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== ESP32 AirPrint 桥 ===");
+    ESP_LOGI(TAG, "堆@启动=%u", (unsigned)esp_get_free_heap_size());
     lcd_ui_init();
+    ESP_LOGI(TAG, "堆@LCD后=%u", (unsigned)esp_get_free_heap_size());
     s_evt = xEventGroupCreate();
     esp_err_t r = nvs_flash_init();
     if (r == ESP_ERR_NVS_NO_FREE_PAGES || r == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -194,6 +199,6 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(3000));
     board_usb_host_power();
     usb_printer_start();
-    ESP_LOGI(TAG, "桥就绪");
+    ESP_LOGI(TAG, "桥就绪，堆=%u", (unsigned)esp_get_free_heap_size());
 #endif
 }

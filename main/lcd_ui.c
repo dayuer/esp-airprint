@@ -3,6 +3,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "bsp/esp-bsp.h"
+#include "esp_lvgl_port.h"
 #include "lvgl.h"
 
 LV_FONT_DECLARE(font_cn_16);
@@ -24,7 +25,13 @@ static void mk_label(lv_obj_t **lbl, int y, lv_color_t color, const lv_font_t *f
 
 void lcd_ui_init(void)
 {
-    bsp_display_start();
+    const bsp_display_cfg_t dcfg = {
+        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+        .buffer_size   = BSP_LCD_H_RES * 16,   /* 双缓冲 240x30 太奢侈，状态屏够用即可 */
+        .double_buffer = false,
+        .flags = { .buff_dma = true, .buff_spiram = false },
+    };
+    bsp_display_start_with_config(&dcfg);
     bsp_display_backlight_on();
     bsp_display_lock(0);
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
