@@ -9,12 +9,18 @@
 namespace urf {
 
 // 把一行 8 位灰度像素编码成 URF 的行数据，追加到 out。
-// 输出不含前置的「行重复计数」字节，但**含**行尾的 0x80。
-// width 为 0 时只追加 0x80。
+//
+// 输出不含前置的「行重复计数」字节，**也不含任何行结束符**——URF 的行以
+// 「已产出的像素数攒够 width」结束，没有终止字节。这一点由
+// tests/fixtures/ 里 Apple 光栅器的真实产物确定。曾经按 0x80 断行的模型是错的，
+// 多写一个 0x80 会被解码成 129 个字面像素，整页从第一行起全烂。
 void EncodeRowGray8(const uint8_t* row, size_t width, std::vector<uint8_t>& out);
 
 // colorspace 字段取值。数值待 Task 9 用真实 cupsfilter 产物核对。
+// 页头常量。取值由 tests/fixtures/ 里 Apple 光栅器的真实产物核对过。
 constexpr uint8_t kColorspaceGray = 0;
+// URF 的 duplex 枚举：1 = 单面。0 不是合法值——Apple 的产物写的是 1。
+constexpr uint8_t kDuplexOneSided = 1;
 
 struct PageSpec {
   uint32_t width_px = 0;
@@ -22,6 +28,7 @@ struct PageSpec {
   uint32_t dpi = 0;
   uint8_t bits_per_pixel = 8;
   uint8_t colorspace = kColorspaceGray;
+  uint8_t duplex = kDuplexOneSided;
 };
 
 // 12 字节文件头，页数先写占位值。
@@ -42,9 +49,11 @@ void WritePageHeader(std::vector<uint8_t>& out, const PageSpec& spec);
 // 任何一步出错都抛 std::runtime_error。析构时若未 Close 会尝试关闭文件但不回填。
 class Writer {
  public:
-  // line_repeat 打开后，连续相同的行会合并成一个行重复计数。
-  // 默认关闭：这个字节的语义还没在真打印机上验过，见 HEADER-FIELDS.md。
-  explicit Writer(const std::string& path, bool line_repeat = false);
+  // line_repeat 把连续相同的行合并成一个行重复计数（值 N 表示该行共出现 N+1 次）。
+  //
+  // 默认打开。这不是可选优化：Apple 的产物里一页 3507 行只用了 100 条记录，
+  // 10KB；每行独立编码是 147KB。语义已由 tests/fixtures/ 的真实样本核对。
+  explicit Writer(const std::string& path, bool line_repeat = true);
   ~Writer();
 
   Writer(const Writer&) = delete;

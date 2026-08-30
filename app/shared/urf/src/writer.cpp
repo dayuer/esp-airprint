@@ -24,7 +24,7 @@ void WriteFileHeader(std::vector<uint8_t>& out, uint32_t page_count) {
 void WritePageHeader(std::vector<uint8_t>& out, const PageSpec& spec) {
   out.push_back(spec.bits_per_pixel);
   out.push_back(spec.colorspace);
-  out.push_back(0);   // duplex
+  out.push_back(spec.duplex);
   out.push_back(0);   // quality
   for (int i = 0; i < 8; ++i) out.push_back(0);
   PushBE32(out, spec.width_px);

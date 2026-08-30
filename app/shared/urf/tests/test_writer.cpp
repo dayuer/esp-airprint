@@ -85,9 +85,9 @@ TEST(写一页并回填页数) {
   }
   Bytes d = ReadFile(path);
   CHECK_BYTES(Bytes(d.begin() + 8, d.begin() + 12), Bytes{0, 0, 0, 1});
-  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x00, 0x03, 0xFF, 0x80});
-  CHECK_BYTES(Bytes(d.begin() + 48, d.begin() + 52), Bytes{0x00, 0x03, 0x00, 0x80});
-  CHECK_EQ(d.size(), static_cast<size_t>(52));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 47), Bytes{0x00, 0x03, 0xFF});
+  CHECK_BYTES(Bytes(d.begin() + 47, d.begin() + 50), Bytes{0x00, 0x03, 0x00});
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 6));
 }
 
 TEST(写两页页数是2) {
@@ -120,7 +120,7 @@ TEST(分多批喂行) {
   }
   Bytes d = ReadFile(path);
   CHECK_BYTES(Bytes(d.begin() + 8, d.begin() + 12), Bytes{0, 0, 0, 1});
-  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 16));
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 12));
 }
 
 TEST(行数不足时EndPage要抛) {
@@ -164,10 +164,10 @@ TEST(一页都没有就Close要抛) {
   CHECK(threw);
 }
 
-TEST(默认关闭时每行都有独立的重复计数零) {
+TEST(显式关闭时每行都有独立的重复计数零) {
   const std::string path = urftest::TmpPath("urf_norepeat.urf");
   {
-    urf::Writer w(path);   // 默认关闭
+    urf::Writer w(path, /*line_repeat=*/false);
     w.BeginPage(SmallSpec(2, 3));
     std::vector<uint8_t> band = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11};
     w.WriteRows(band.data(), 3);
@@ -175,9 +175,9 @@ TEST(默认关闭时每行都有独立的重复计数零) {
     w.Close();
   }
   Bytes d = ReadFile(path);
-  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 12));
-  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x00, 0x01, 0x11, 0x80});
-  CHECK_BYTES(Bytes(d.begin() + 48, d.begin() + 52), Bytes{0x00, 0x01, 0x11, 0x80});
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 9));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 47), Bytes{0x00, 0x01, 0x11});
+  CHECK_BYTES(Bytes(d.begin() + 47, d.begin() + 50), Bytes{0x00, 0x01, 0x11});
 }
 
 TEST(打开后三行相同合并成一条) {
@@ -192,8 +192,8 @@ TEST(打开后三行相同合并成一条) {
   }
   Bytes d = ReadFile(path);
   // 重复计数 2 表示「再重复 2 次」，共 3 行。
-  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 4));
-  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x02, 0x01, 0x11, 0x80});
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 3));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 47), Bytes{0x02, 0x01, 0x11});
 }
 
 TEST(打开后不同的行不合并) {
@@ -207,9 +207,9 @@ TEST(打开后不同的行不合并) {
     w.Close();
   }
   Bytes d = ReadFile(path);
-  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 8));
-  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x01, 0x01, 0x11, 0x80});
-  CHECK_BYTES(Bytes(d.begin() + 48, d.begin() + 52), Bytes{0x00, 0x01, 0x22, 0x80});
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 6));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 47), Bytes{0x01, 0x01, 0x11});
+  CHECK_BYTES(Bytes(d.begin() + 47, d.begin() + 50), Bytes{0x00, 0x01, 0x22});
 }
 
 TEST(重复计数上限256行后另起一条) {
@@ -224,9 +224,9 @@ TEST(重复计数上限256行后另起一条) {
   }
   Bytes d = ReadFile(path);
   // 300 行 = 256 + 44，两条记录，每条 4 字节。
-  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 8));
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 6));
   CHECK_EQ(static_cast<int>(d[44]), 255);   // 再重复 255 次 = 256 行
-  CHECK_EQ(static_cast<int>(d[48]), 43);    // 再重复 43 次 = 44 行
+  CHECK_EQ(static_cast<int>(d[47]), 43);    // 再重复 43 次 = 44 行
 }
 
 // A4 600dpi 灰度整页是 4962x7014 = 34.8MB。这个测试按 400 行一带喂进去，

@@ -106,22 +106,37 @@ ValidateResult Validate(const std::string& path) {
     if (r.actual_pages == 0) { r.width_px = w; r.height_px = h; }
     ++r.actual_pages;
 
+    // 行的结束是「像素数攒够 width」，不是某个终止字节。
+    // 重复计数 N 表示该行共出现 N+1 次。两条都由 tests/fixtures/ 的真实样本确定。
     uint32_t rows = 0;
     bool truncated = false;
     while (rows < h) {
-      uint8_t ignored;
-      if (!src.Read(&ignored)) { truncated = true; break; }   // 行重复计数
-      ++rows;
-      for (;;) {
+      uint8_t repeat;
+      if (!src.Read(&repeat)) { truncated = true; break; }
+
+      uint32_t px = 0;
+      while (px < w) {
         uint8_t c;
         if (!src.Read(&c)) { truncated = true; break; }
-        if (c == 128) break;
-        if (!src.Skip((c < 128) ? 1u : static_cast<size_t>(257 - c))) {
-          truncated = true;
+        uint32_t count;
+        size_t skip;
+        if (c < 128) {
+          count = static_cast<uint32_t>(c) + 1;   // 重复下一个像素 c+1 次
+          skip = 1;
+        } else if (c == 128) {
+          truncated = true;                        // 128 不是合法包首字节
           break;
+        } else {
+          count = static_cast<uint32_t>(257 - c);  // 接 257-c 个字面像素
+          skip = count;
         }
+        px += count;
+        if (!src.Skip(skip)) { truncated = true; break; }
       }
-      if (truncated) break;
+      if (truncated || px != w) { truncated = true; break; }
+
+      rows += static_cast<uint32_t>(repeat) + 1;
+      if (rows > h) { truncated = true; break; }
     }
     if (rows != h || truncated) {
       std::fclose(f);

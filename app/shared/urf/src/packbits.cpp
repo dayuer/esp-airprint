@@ -4,7 +4,6 @@ namespace urf {
 
 namespace {
 constexpr size_t kMaxRun = 128;
-constexpr uint8_t kEndOfLine = 0x80;
 }  // namespace
 
 void EncodeRowGray8(const uint8_t* row, size_t width, std::vector<uint8_t>& out) {
@@ -40,7 +39,6 @@ void EncodeRowGray8(const uint8_t* row, size_t width, std::vector<uint8_t>& out)
       out.insert(out.end(), row + start, row + i);
     }
   }
-  out.push_back(kEndOfLine);
 }
 
 }  // namespace urf

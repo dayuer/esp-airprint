@@ -64,12 +64,20 @@ def fix_page_count(d):
         pos += 32
         rows = 0
         while rows < ht and pos < len(d):
-            pos += 1                      # 行重复计数
-            rows += 1
-            while pos < len(d):           # 该行的 RLE 包
+            # 行重复计数：该行共出现 rep+1 次。
+            rep = d[pos]; pos += 1
+            # 行的结束是「像素数攒够页宽」，没有终止字节。
+            # 早先这里按 0x80 断行，那是错的——真实数据里 0x80 不作包首字节出现，
+            # 于是一行就把整个文件吞完，多页文档会被数成 1 页。
+            # 依据：app/shared/urf/tests/fixtures/ 里 Apple 光栅器的真实产物。
+            px = 0
+            while px < w and pos < len(d):
                 n = d[pos]; pos += 1
-                if n == 128: break
-                pos += 1 if n < 128 else (257 - n)
+                if n < 128:
+                    px += n + 1; pos += 1
+                else:
+                    cnt = 257 - n; px += cnt; pos += cnt
+            rows += rep + 1
     if pages and pages != declared:
         d = d[:8] + struct.pack('>I', pages) + d[12:]
     return d, declared, pages

@@ -30,14 +30,15 @@ cmake --build build-android --parallel
 
 adb shell "mkdir -p $DEVDIR"
 adb push build-android/urf_tests "$DEVDIR/" >/dev/null
+adb push tests/fixtures/. "$DEVDIR/fixtures/" >/dev/null
 adb shell "chmod 755 $DEVDIR/urf_tests"
 
 # URF_TEST_TMPDIR 让测试把产物写到设备可写目录。
 set +e
-adb shell "cd $DEVDIR && URF_TEST_TMPDIR=$DEVDIR ./urf_tests"
+adb shell "cd $DEVDIR && URF_TEST_TMPDIR=$DEVDIR URF_FIXTURE_DIR=$DEVDIR/fixtures ./urf_tests"
 rc=$?
 set -e
 
 # A4 整页产物 35MB，跑完就删，别留在设备上。
-adb shell "rm -f $DEVDIR/*.urf"
+adb shell "rm -rf $DEVDIR/*.urf $DEVDIR/fixtures"
 exit $rc

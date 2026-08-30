@@ -1,5 +1,6 @@
 #include "urf/urf.h"
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -123,4 +124,19 @@ TEST(高度不一致时拒绝) {
   std::string p = MakeOnePageFile(120, 30);
   urf::ValidateResult r = urf::ValidateForUpload(p, 120, 7014);
   CHECK(!r.ok);
+}
+
+// Apple 自己的光栅器产出的真实 URF。格式是从它反推的，也用它守住。
+// 这条测试红了，说明行模型又被改错了——那种错不会在别处报错，
+// 只会变成一沓废纸。
+TEST(必须认Apple光栅器的真实产物) {
+  const char* dir = std::getenv("URF_FIXTURE_DIR");
+  std::string p = std::string(dir ? dir : "tests/fixtures") +
+                  "/apple-gray8-2480x3507-300dpi.urf";
+  urf::ValidateResult r = urf::Validate(p);
+  CHECK(r.ok);
+  CHECK_EQ(r.declared_pages, 1u);
+  CHECK_EQ(r.actual_pages, 1u);
+  CHECK_EQ(r.width_px, 2480u);
+  CHECK_EQ(r.height_px, 3507u);
 }
