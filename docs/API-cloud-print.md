@@ -628,6 +628,37 @@ body 是光栅数据。**上限 200MB**（URF 是光栅，整页照片单页就�
 **响应 404**：该设备从未上报过 `ident`（没插打印机，或还没枚举完）。
 App 应提示「打印机未就绪」，不要用默认值蒙——尺寸蒙错就是废纸。
 
+### 4.5b `GET /api/devices` —— 列出我名下的设备
+
+角色：`app`。**不需要 `X-Device`**——这个端点就是用来得知有哪些 `dev` 的。
+
+其余所有设备端点都要求调用方已经知道 `{dev}`，而 `dev` 唯一的来源是配网时从
+SoftAP 读到的 MAC。没有这个端点，App 的设备列表只能存在手机本地，用户换手机或
+重装 App 后账号还在、设备还绑着，但 App 再也找不到它，只能重新配网一遍。
+
+**响应 200**
+
+```json
+{
+  "devices": [
+    {"dev":"f412fa87c9e0","name":"工位打印机",
+     "online":true,"seen":1756500000,"state":"ready","bound":1756400000,
+     "printer":{"serial":"CNB9K1P2X4","make":"HP","model":"HP Laser MFP 136a",
+                "attached":true},
+     "queued_jobs":0}
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `name` | enroll 时传的名字，用户可改 |
+| `bound` | 绑定时间戳 |
+| `printer` | 当前插着的打印机。没插时为 `null` |
+| `queued_jobs` | 该设备名下排队中的作业总数 |
+
+一台设备都没有时返回 `{"devices":[]}`，**不是 404**。
+
 ### 4.6 `GET /api/status` —— 查设备与作业
 
 两种角色都可以调。只返回 `X-Device` 那一台的数据。
