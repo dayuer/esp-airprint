@@ -12,22 +12,31 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		87D65E5EB92D5DDF045E67D9 /* packbits.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9E98D89AA55C4EBC072BA96 /* packbits.cpp */; };
+		89F95B21582D6E07E959B541 /* writer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 45C1DDECB4B9F551015B773D /* writer.cpp */; };
+		8BB0D995C46B47A1A99CC7A8 /* validate.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DC3A57F3B728582B1E9F67D3 /* validate.cpp */; };
 		A07B5F86A1D145DA1922746C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		A6FC516398704C3981378F5B /* Literata-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5D93C143D5CB4D739747C207 /* Literata-SemiBold.ttf */; };
+		CC9BE92D093F6896C001D642 /* RasterKit.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0095D51DF3962902E9E50197 /* RasterKit.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0095D51DF3962902E9E50197 /* RasterKit.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = RasterKit.mm; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* AirPrint.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirPrint.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = AirPrint/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = AirPrint/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = AirPrint/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		35034AD2FDA82D457E2C3AB3 /* RasterKit.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = RasterKit.h; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-AirPrint.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AirPrint.debug.xcconfig"; path = "Target Support Files/Pods-AirPrint/Pods-AirPrint.debug.xcconfig"; sourceTree = "<group>"; };
+		45C1DDECB4B9F551015B773D /* writer.cpp */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.cpp; path = writer.cpp; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-AirPrint.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AirPrint.release.xcconfig"; path = "Target Support Files/Pods-AirPrint/Pods-AirPrint.release.xcconfig"; sourceTree = "<group>"; };
 		5D93C143D5CB4D739747C207 /* Literata-SemiBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = "Literata-SemiBold.ttf"; path = "../assets/fonts/Literata-SemiBold.ttf"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-AirPrint.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-AirPrint.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		66103BF6656E41B4AFA6B4A8 /* Literata-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = "Literata-Regular.ttf"; path = "../assets/fonts/Literata-Regular.ttf"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = AirPrint/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = AirPrint/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		D9E98D89AA55C4EBC072BA96 /* packbits.cpp */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.cpp; path = packbits.cpp; sourceTree = "<group>"; };
+		DC3A57F3B728582B1E9F67D3 /* validate.cpp */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.cpp; path = validate.cpp; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -64,6 +73,17 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		6041F87026548147A8556FD7 /* SharedURF */ = {
+			isa = PBXGroup;
+			children = (
+				D9E98D89AA55C4EBC072BA96 /* packbits.cpp */,
+				45C1DDECB4B9F551015B773D /* writer.cpp */,
+				DC3A57F3B728582B1E9F67D3 /* validate.cpp */,
+			);
+			name = SharedURF;
+			path = ../shared/urf/src;
+			sourceTree = SOURCE_ROOT;
+		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
 			isa = PBXGroup;
 			children = (
@@ -80,6 +100,8 @@
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
 				BAA2A4F51F0346179292CE6E /* Resources */,
+				A359B4F42590343BEEA99351 /* RasterKit */,
+				6041F87026548147A8556FD7 /* SharedURF */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -93,6 +115,16 @@
 			);
 			name = Products;
 			sourceTree = "<group>";
+		};
+		A359B4F42590343BEEA99351 /* RasterKit */ = {
+			isa = PBXGroup;
+			children = (
+				0095D51DF3962902E9E50197 /* RasterKit.mm */,
+				35034AD2FDA82D457E2C3AB3 /* RasterKit.h */,
+			);
+			name = RasterKit;
+			path = RasterKit;
+			sourceTree = SOURCE_ROOT;
 		};
 		BAA2A4F51F0346179292CE6E /* Resources */ = {
 			isa = PBXGroup;
@@ -264,6 +296,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				CC9BE92D093F6896C001D642 /* RasterKit.mm in Sources */,
+				87D65E5EB92D5DDF045E67D9 /* packbits.cpp in Sources */,
+				89F95B21582D6E07E959B541 /* writer.cpp in Sources */,
+				8BB0D995C46B47A1A99CC7A8 /* validate.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -275,9 +311,15 @@
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-AirPrint.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_BITCODE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../shared/urf/include",
+					"$(SRCROOT)/RasterKit",
+				);
 				INFOPLIST_FILE = AirPrint/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -305,8 +347,14 @@
 			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-AirPrint.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../shared/urf/include",
+					"$(SRCROOT)/RasterKit",
+				);
 				INFOPLIST_FILE = AirPrint/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
