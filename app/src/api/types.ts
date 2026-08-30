@@ -112,8 +112,12 @@ export interface StatusResponse {
   device: {
     dev: DeviceId;
     online: boolean;
-    seen: number;
-    state: DeviceState;
+    /** 真服务端目前不返回它。 */
+    seen?: number;
+    /** 真服务端目前不返回它——在线与否看 online。 */
+    state?: DeviceState;
+    /** 当前插着的打印机序列号。文档 4.6 没写，但真服务端返回它。 */
+    serial?: string;
     prn: PrinterPanel | null;
   };
   /** 最多最近 15 件。 */
@@ -137,6 +141,41 @@ export interface PrintResponse {
 /** 档案来源层级，决定 App 该怎么描述这份配置的可信度。 */
 export type ProfileSrc = 'serial' | 'model' | 'authoritative' | 'quirks' | 'default';
 
+/** 档案里的一个原语（文档 3.7b 的白名单）。 */
+export interface ProfileStep {
+  op: 'send_hex' | 'delay_ms' | 'iface_reset' | 'read_status';
+  data?: string;
+  ms?: number;
+  required?: boolean;
+}
+
+/**
+ * USB 层怪癖档案。
+ *
+ * **它是一份可编排的动作序列，不是参数表**（文档 3.7b）。
+ *
+ * 文档 4.7 里画的是另一个形状（`uel_job_end` 之类的布尔开关），那是 v1 的
+ * 遗留——3.7b 早就把档案改成动作序列了，文档自己前后矛盾。真服务端返回的
+ * 是这个形状，以它为准。
+ */
+export interface DeviceProfile {
+  rev: number;
+  match?: string;
+  serial?: string;
+  src: ProfileSrc;
+  flags: {unidir: boolean; pjl_ok: boolean};
+  hooks: {
+    job_begin?: ProfileStep[];
+    job_end?: ProfileStep[];
+    wake?: ProfileStep[];
+  };
+  /** 实测页边距。服务端另存一列，可能不返回。 */
+  margins_mm?: [number, number, number, number];
+  votes?: number;
+  /** true 表示同型号出现过相反结论。App 应提示用户测一次。 */
+  disputed?: boolean;
+}
+
 export interface PrinterDetail {
   printer: {
     serial: string;
@@ -146,22 +185,12 @@ export interface PrinterDetail {
     model: string;
     cmd: string;
     urf_caps: string;
-    proto: number;
+    /** 真服务端目前不返回它。 */
+    proto?: number;
     first_seen: number;
     last_seen: number;
   };
-  profile: {
-    uel_job_end: boolean;
-    uel_wake: boolean;
-    wake_delay_ms: number;
-    iface_cycle: boolean;
-    unidir: boolean;
-    margins_mm: [number, number, number, number];
-    src: ProfileSrc;
-    votes: number;
-    /** true 表示同型号出现过相反结论。App 应提示用户测一次。 */
-    disputed: boolean;
-  };
+  profile: DeviceProfile;
 }
 
 export interface PrinterListItem {

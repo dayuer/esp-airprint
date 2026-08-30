@@ -68,8 +68,9 @@ export async function fetchDeviceList(
         dev,
         name: '',
         online: s.device.online,
-        seen: s.device.seen,
-        state: s.device.state,
+        // 真服务端不返回 seen/state，只给 online。别在这里编一个出来。
+        seen: s.device.seen ?? 0,
+        state: s.device.state ?? (s.device.online ? 'ready' : 'offline'),
         bound: 0,
         // /api/status 不返回打印机型号，只能给出「有没有」。
         printer: null,

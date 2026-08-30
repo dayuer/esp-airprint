@@ -120,3 +120,24 @@ test('ApiFailure 不会把 TypeError 漏到 UI——连不上时是 network', as
     expect((e as ApiFailure).error.kind).toBe('network');
   }
 });
+
+test('档案是可编排的动作序列，不是布尔开关表', async () => {
+  // 文档 4.7 画的是 {uel_job_end, margins_mm, ...} 那种参数表，但 3.7b 早就
+  // 把档案改成了动作序列，文档自己前后矛盾。真服务端返回的是动作序列。
+  //
+  // 这条不是在验 mock，是在钉住「以真服务端为准」这个决定：照 4.7 写类型的
+  // 话，详情页会对 undefined 调 .join 直接崩——真机上就是这么崩的。
+  const d = await getPrinter(cfg, DEV);
+  expect(d.profile.hooks).toBeDefined();
+  expect(Array.isArray(d.profile.hooks.job_end)).toBe(true);
+  expect(d.profile.flags).toEqual({unidir: false, pjl_ok: true});
+  expect(typeof d.profile.rev).toBe('number');
+});
+
+test('status 只保证 online，seen/state 可能没有', async () => {
+  // 真服务端返回 {dev, online, serial, prn}——没有 seen 和 state。
+  // 把它们当必填会让「在线」显示成 undefined。
+  const s = await getStatus(cfg, DEV);
+  expect(typeof s.device.online).toBe('boolean');
+  expect(s.device.dev).toBe(DEV);
+});

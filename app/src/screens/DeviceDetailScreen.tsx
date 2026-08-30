@@ -2,7 +2,8 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {
-  ApiFailure, DeviceListItem, JobSummary, PrinterDetail, PrinterList, StatusResponse,
+  ApiFailure, DeviceListItem, JobSummary, PrinterDetail, PrinterList, ProfileStep,
+  StatusResponse,
   describeApiError, describeProfileSrc, getPrinter, getStatus, listPrinters,
   shouldSuggestTest, unbindDevice,
 } from '../api';
@@ -21,6 +22,26 @@ const JOB_STATE_TEXT: Record<JobSummary['state'], string> = {
   done: '已完成',
   failed: '失败',
 };
+
+/**
+ * 把一串档案原语说成人话。
+ *
+ * 空数组和「没有这个钩子」要分开：空数组是**明确测出来「这一步不需要」**，
+ * 而没有这个钩子是「按默认走」。对用户是两回事——前者是已经校准过的结论。
+ */
+export function describeSteps(steps?: ProfileStep[]): string {
+  if (!steps) return '按默认';
+  if (steps.length === 0) return '不做任何动作';
+  return steps
+    .map(s =>
+      s.op === 'send_hex' ? `发送 ${(s.data ?? '').length / 2} 字节`
+      : s.op === 'delay_ms' ? `等待 ${s.ms ?? 0}ms`
+      : s.op === 'iface_reset' ? '复位接口'
+      : s.op === 'read_status' ? '读状态'
+      : s.op,
+    )
+    .join(' → ');
+}
 
 /** 作业体积：URF 是光栅，动辄几 MB，按字节显示没人看得懂。 */
 export function formatBytes(n: number): string {
@@ -95,7 +116,7 @@ export function DeviceDetailScreen({
   const broken = linkBreakOf(status ? {...device, online: status.device.online} : device);
   const jobs = status?.jobs ?? [];
   const suggestTest =
-    printer && shouldSuggestTest(printer.profile.src, printer.profile.disputed);
+    printer && shouldSuggestTest(printer.profile.src, printer.profile.disputed ?? false);
 
   return (
     <ScrollView
@@ -154,7 +175,18 @@ export function DeviceDetailScreen({
             value={describeProfileSrc(printer.profile.src)}
             tone={suggestTest ? 'accent' : 'normal'}
           />
-          <Row label="页边距" value={`${printer.profile.margins_mm.join(' / ')} mm`} ident />
+          {!!printer.profile.margins_mm && (
+            <Row label="页边距" value={`${printer.profile.margins_mm.join(' / ')} mm`} ident />
+          )}
+          {/* 档案是一份动作序列（文档 3.7b），不是参数表。把它摊开给用户看，
+              比一堆 uel_xxx 开关更接近真相——那些开关是 v1 的遗留形状。 */}
+          <Row
+            label="作业开始"
+            value={describeSteps(printer.profile.hooks.job_begin)}
+            ident
+          />
+          <Row label="作业结束" value={describeSteps(printer.profile.hooks.job_end)} ident />
+          <Row label="唤醒" value={describeSteps(printer.profile.hooks.wake)} ident />
           {printer.profile.disputed && (
             <Text style={[type.label, styles.note, {color: c.accent}]}>
               同型号出现过相反的测试结论，已回退到更保守的配置。做一次测试能定下来。

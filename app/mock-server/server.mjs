@@ -224,10 +224,18 @@ export function createMockServer(state = createState(), opts = {}) {
           cmd: p.cmd, urf_caps: p.urf_caps, proto: p.proto,
           first_seen: p.first_seen, last_seen: p.last_seen,
         },
+        // 档案是可编排的动作序列（文档 3.7b），不是布尔开关表。
+        // 文档 4.7 里画的那个形状是 v1 的遗留，真服务端返回的是这个。
         profile: {
-          uel_job_end: true, uel_wake: false, wake_delay_ms: 0,
-          iface_cycle: false, unidir: false, margins_mm: [4, 4, 4, 4],
-          src: 'model', votes: 3, disputed: false,
+          rev: 2, serial: p.serial, src: 'model',
+          flags: {unidir: false, pjl_ok: true},
+          hooks: {
+            job_begin: [{op: 'iface_reset'}],
+            job_end: [{op: 'send_hex', data: '1b252d313233343558', required: true}],
+            wake: [{op: 'send_hex', data: '1b252d313233343558'}, {op: 'delay_ms', ms: 300}],
+          },
+          margins_mm: [4, 4, 4, 4],
+          votes: 3, disputed: false,
         },
       });
     }
@@ -341,10 +349,12 @@ export function createMockServer(state = createState(), opts = {}) {
         .sort((a, b) => b.created - a.created || b.seq - a.seq)
         .slice(0, 15)
         .map(({dev: _dev, serial: _serial, seq: _seq, ...rest}) => rest);
+      // 字段跟真服务端对齐：它返回 serial，不返回 seen/state。
       return send(res, 200, {
         device: {
-          dev: device.dev, online: device.online, seen: device.seen,
-          state: device.state, prn: device.online ? device.prn : null,
+          dev: device.dev, online: device.online,
+          serial: device.printer?.serial ?? '',
+          prn: device.online ? device.prn : null,
         },
         jobs,
       });
