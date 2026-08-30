@@ -31,7 +31,7 @@ type Options struct {
 	// Ticker 驱动超时检查。nil 时 Run 自建 1 秒 ticker；测试里手动喂。
 	Ticker      <-chan time.Time
 	JobTimeout  time.Duration // 传输无进展多久退回队列，默认 180s
-	IdleTimeout time.Duration // 多久没心跳就退出，默认 5min
+	IdleTimeout time.Duration // 多久没心跳就退出，默认 120s
 	Now         func() time.Time
 }
 
@@ -67,7 +67,8 @@ func New(dev string, st Store, pub Publisher, o Options) *Actor {
 		o.JobTimeout = 180 * time.Second
 	}
 	if o.IdleTimeout == 0 {
-		o.IdleTimeout = 5 * time.Minute
+		// 设备保证状态一变 2 秒内推、没变也 30 秒一拍，连丢四拍才判离线。
+		o.IdleTimeout = 120 * time.Second
 	}
 	return &Actor{
 		dev: dev, st: st, pub: pub,

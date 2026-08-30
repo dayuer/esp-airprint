@@ -6,9 +6,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/dayuer/stickbox/server/go/internal/auth"
@@ -69,7 +71,33 @@ func (a *API) Handler() http.Handler {
 	// 两种角色都行
 	mux.Handle("GET /api/status", a.requireAny(a.handleStatus))
 
-	return mux
+	return drainBody(mux)
+}
+
+// 单次最多排掉多少请求体。设备自己的请求都 <4KB（SERVER-REQUIREMENTS 1.1），
+// 1MB 已经很宽松；再大就不值得为一个错误响应去读，直接关连接。
+const maxDrainBytes = 1 << 20
+
+// drainBody 保证带请求体的请求在响应之后把体读完。
+//
+// 这条是真踩过的故障（SERVER-REQUIREMENTS 3.1）：旧服务端对 POST 直接返回
+// 404 而不读 body，HTTP/1.1 长连接下连接失步——设备已经把 7KB 发出去了、
+// 服务端不收，客户端卡在那儿等一个读不完的响应，34 秒后连 MQTT 都跟着写
+// 超时，最后设备重启。
+//
+// 放在中间件里而不是每个 handler 各自处理：错误分支太多，漏一个就复现。
+func drainBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if r.Body == nil {
+			return
+		}
+		n, err := io.Copy(io.Discard, io.LimitReader(r.Body, maxDrainBytes))
+		if err != nil || n == maxDrainBytes {
+			// 排不完就别装作长连接还能用，让它关掉重开
+			w.Header().Set("Connection", "close")
+		}
+	})
 }
 
 type handlerFn func(http.ResponseWriter, *http.Request, auth.Identity)
@@ -121,10 +149,21 @@ func unauthorized(w http.ResponseWriter) {
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"e": "unauthorized"})
 }
 
+// writeJSON 先编码再发头，为的是带上 Content-Length。
+//
+// 直接 WriteHeader 再 Encode 的话 Go 会用 chunked 传输编码，而设备用的
+// esp_http_client **不解 chunked 响应体**（SERVER-REQUIREMENTS 3.3）。
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, `{"e":"server error"}`, http.StatusInternalServerError)
+		return
+	}
+	b = append(b, '\n')
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	w.Write(b)
 }
 
 func fail(w http.ResponseWriter, code int, e, detail string) {

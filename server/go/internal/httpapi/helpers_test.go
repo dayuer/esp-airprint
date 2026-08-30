@@ -8,3 +8,15 @@ func osReadDir(dir string) ([]os.DirEntry, error) { return os.ReadDir(dir) }
 func loadCapsForTest(dep *testDeps, dev string) (caps, serial string, ok bool) {
 	return (&API{cfg: dep.cfg}).loadIdentCaps(dev)
 }
+
+func io_ReadAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
+	buf := make([]byte, 0, 512)
+	tmp := make([]byte, 512)
+	for {
+		n, err := r.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		if err != nil {
+			return buf, nil
+		}
+	}
+}

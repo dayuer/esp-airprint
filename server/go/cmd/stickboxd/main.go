@@ -93,7 +93,9 @@ func serve(cfg *config.Config) error {
 	// 用一个延迟绑定的壳打破环。
 	pubShim := &publisherShim{}
 	reg := registry.New(st, pubShim, device.Options{
-		JobTimeout: 180 * time.Second, IdleTimeout: 5 * time.Minute,
+		// 判离线 120 秒：设备保证状态一变 2 秒内推、没变也 30 秒一拍，
+		// 连丢四拍才判离线（SERVER-REQUIREMENTS 2.1）。
+		JobTimeout: 180 * time.Second, IdleTimeout: 120 * time.Second,
 	})
 	defer reg.Shutdown()
 

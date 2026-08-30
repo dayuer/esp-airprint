@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/dayuer/stickbox/server/go/internal/auth"
 	"github.com/dayuer/stickbox/server/go/internal/device"
@@ -16,6 +19,17 @@ import (
 )
 
 const maxJobBytes = 200 << 20 // URF 是光栅，整页照片单页就能到 15MB
+
+// 分片名只允许安全字符——它直接进文件名。
+var reSafePart = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+func sanitizePart(v string) string {
+	v = reSafePart.ReplaceAllString(strings.ToLower(v), "")
+	if v == "" || len(v) > 24 {
+		return "extra"
+	}
+	return v
+}
 
 func newJobID() string {
 	b := make([]byte, 6)
@@ -156,10 +170,35 @@ func (a *API) handleIdent(w http.ResponseWriter, r *http.Request, id auth.Identi
 		fail(w, 500, "server error", "")
 		return
 	}
-	if err := os.WriteFile(filepath.Join(dir, "latest.json"), raw, 0o644); err != nil {
+
+	// 分片上传：设备发起的 HTTPS 请求载荷必须 <4KB（SERVER-REQUIREMENTS 1.1），
+	// 所以全量档案要拆成几趟。带 _part 的是增量片，按片名单独存；
+	// 不带的是第 0 层，整份替换。
+	part := "base"
+	if v, ok := probe["_part"].(string); ok && v != "" {
+		part = sanitizePart(v)
+	}
+
+	// 留历史：探针会随固件改进而变，覆盖掉就没法比对「是机器变了还是我们的
+	// 采集变了」（SERVER-REQUIREMENTS 6.2）。文件名带服务端时间戳——
+	// 设备没有 RTC，时间只能由服务端盖（5.3）。
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	hist := filepath.Join(dir, part+"-"+stamp+".json")
+	if err := os.WriteFile(hist, raw, 0o644); err != nil {
 		fail(w, 500, "server error", "")
 		return
 	}
-	a.onIdent(dev, raw)
-	writeJSON(w, 200, map[string]int{"ok": 1})
+	if err := os.WriteFile(filepath.Join(dir, part+".json"), raw, 0o644); err != nil {
+		fail(w, 500, "server error", "")
+		return
+	}
+	// latest.json 始终指向第 0 层：建档和 render-profile 都从它取。
+	if part == "base" {
+		if err := os.WriteFile(filepath.Join(dir, "latest.json"), raw, 0o644); err != nil {
+			fail(w, 500, "server error", "")
+			return
+		}
+		a.onIdent(dev, raw)
+	}
+	writeJSON(w, 200, map[string]any{"ok": 1, "part": part})
 }
