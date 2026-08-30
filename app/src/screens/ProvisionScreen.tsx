@@ -16,24 +16,26 @@ import {PortalFailure, PortalNetwork} from '../provisioning/portal';
 import {
   isWifiSetupAvailable, joinSetupNetwork, leaveSetupNetwork, portalOverWifi,
 } from '../provisioning/transport';
-import {ProvisionStage, PortalInfo, completeProvisioning, confirmProvisioned, readPortal}
-  from '../provisioning/wizard';
+import {
+  EnrolledKey, PortalInfo, ProvisionStage, confirmProvisioned,
+  enrollForProvisioning, readPortal, writeAndWait,
+} from '../provisioning/wizard';
 import {ConnectOutcome, describeOutcome} from '../provisioning/flow';
 
 const SETUP_PREFIX = 'StickBox-Setup-';
 
 type Step =
   | {k: 'intro'}
-  | {k: 'connecting'}
-  | {k: 'reading'}
-  | {k: 'pick'; info: PortalInfo}
-  | {k: 'password'; info: PortalInfo; net: PortalNetwork}
+  /** 拿密钥。**必须在连热点之前**——连上之后手机就没有互联网了。 */
+  | {k: 'enrolling'}
+  | {k: 'connecting'; key: EnrolledKey}
+  | {k: 'reading'; key: EnrolledKey}
+  | {k: 'pick'; key: EnrolledKey; info: PortalInfo}
+  | {k: 'password'; key: EnrolledKey; info: PortalInfo; net: PortalNetwork}
   | {k: 'working'; stage: ProvisionStage}
   | {k: 'result'; outcome: ConnectOutcome; dev: string; reset: boolean; confirmed?: boolean};
 
 const STAGE_TEXT: Record<ProvisionStage, string> = {
-  enrolling: '正在申请设备密钥',
-  joining: '正在连接设备热点',
   sending: '正在把 Wi-Fi 和密钥写进设备',
   waiting: '设备正在试连，别切走',
 };
@@ -76,40 +78,49 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
 
   const read = useCallback(async () => {
     setError(null);
-    setStep({k: 'connecting'});
     try {
+      // ① 先拿密钥。这一步必须在连热点之前——手机同一时刻只能连一个 AP，
+      //    连上配网热点就断开了原来的 Wi-Fi，那之后 enroll 只能指望蜂窝。
+      //    不带 dev：这一刻还不知道设备的 MAC，也不需要知道。
+      setStep({k: 'enrolling'});
+      const key = await enrollForProvisioning(
+        session.getState().config(),
+        name.trim() || '新设备',
+      );
+
+      // ② 连热点。唯一一次。
+      setStep({k: 'connecting', key});
       if (!isWifiSetupAvailable()) throw new Error('这个版本没有原生 Wi-Fi 模块');
-      // 系统会弹一个只列出 StickBox-Setup 开头的网络的选择框。
       await joinSetupNetwork(SETUP_PREFIX);
-      setStep({k: 'reading'});
+
+      // ③ 读设备信息和它扫到的网络。此时已经没有互联网了，但这些都走热点。
+      setStep({k: 'reading', key});
       const info = await readPortal(portal);
-      setName(info.dev ? `打印机 ${info.dev.slice(-4).toUpperCase()}` : '我的打印机');
-      setStep({k: 'pick', info});
+      setStep({k: 'pick', key, info});
     } catch (e) {
+      leaveSetupNetwork();
       fail(e);
       setStep({k: 'intro'});
     }
-  }, []);
+  }, [name]);
 
-  const run = async (info: PortalInfo, net: PortalNetwork) => {
+  const run = async (key: EnrolledKey, info: PortalInfo, net: PortalNetwork) => {
     setError(null);
-    setStep({k: 'working', stage: 'enrolling'});
+    setStep({k: 'working', stage: 'sending'});
     try {
-      const r = await completeProvisioning(
-        session.getState().config(),
-        {dev: info.dev, ssid: net.s, pass, name: name.trim() || '未命名设备'},
+      // ④ 密钥早就在手上了，这里只写不申请。
+      const outcome = await writeAndWait(
+        {ssid: net.s, pass, devKey: key.deviceKey},
         portal,
         stage => setStep({k: 'working', stage}),
-        // 已经连着热点了，不用再连一次。
-        undefined,
       );
       // 设备已经重启，热点没了，先放开那个网络请求。
       leaveSetupNetwork();
-      setStep({k: 'result', outcome: r.outcome, dev: info.dev, reset: r.reset});
+      setStep({k: 'result', outcome, dev: info.dev, reset: key.reset});
     } catch (e) {
-      leaveSetupNetwork();   // 失败也要放开，否则系统一直替我们守着这个网络
+      leaveSetupNetwork();
       fail(e);
-      setStep({k: 'pick', info});
+      setStep({k: 'pick', key, info});
     }
   };
 
@@ -141,16 +152,26 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
               点下面的按钮，系统会让你确认加入哪一台。
             </Text>
             <Text style={[type.label, styles.hint, {color: c.inkFaint}]}>
-              只连一次热点。密钥由 App 自动申请并写入，你不用记也不用抄。
-              写完之后设备会重启、热点消失，手机自动回到原来的网络，
-              设备连上后就会出现在列表里。
+              全程只连一次热点。写完之后设备会重启、热点消失，手机自动回到
+              原来的网络，设备连上后就出现在列表里。
             </Text>
-            <View style={styles.actions}>
-              <Button title="搜索并加入设备热点" onPress={read} />
+            <View style={styles.form}>
+              <Field
+                value={name}
+                onChangeText={setName}
+                placeholder="给这台设备起个名字"
+                accessibilityLabel="设备名字"
+              />
+              {/* 名字在这里问，是因为申请密钥要带着它，而密钥必须在连热点之前
+                  拿到（连上热点手机就没有互联网了）。这个顺序是内部实现，
+                  按钮上不提——用户要做的事就是「加入设备热点」。 */}
+              <Button title="加入设备热点" onPress={read} />
             </View>
           </>
         )}
 
+        {/* 这一步在连热点之前跑，失败信息要说清是服务器那头的问题。 */}
+        {step.k === 'enrolling' && <Waiting text="正在准备" />}
         {step.k === 'connecting' && <Waiting text="正在加入设备的配网热点" />}
         {step.k === 'reading' && <Waiting text="正在读取设备信息" />}
 
@@ -169,7 +190,7 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
                   android_ripple={{color: 'transparent'}}
                   onPress={() => {
                     setPass('');
-                    setStep(n.k ? {k: 'password', info: step.info, net: n} : {k: 'password', info: step.info, net: n});
+                    setStep({k: 'password', key: step.key, info: step.info, net: n});
                   }}>
                   <Row label={n.k ? '需要密码' : '开放'} value={n.s} tone="normal" />
                 </Pressable>
@@ -194,19 +215,13 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
                   accessibilityLabel="Wi-Fi 密码"
                 />
               )}
-              <Field
-                value={name}
-                onChangeText={setName}
-                placeholder="给这台设备起个名字"
-                accessibilityLabel="设备名字"
-              />
               <Button
                 title="开始配网"
-                onPress={() => run(step.info, step.net)}
+                onPress={() => run(step.key, step.info, step.net)}
                 disabled={!!step.net.k && pass.length === 0}
               />
               <Button title="换一个网络" variant="quiet"
-                      onPress={() => setStep({k: 'pick', info: step.info})} />
+                      onPress={() => setStep({k: 'pick', key: step.key, info: step.info})} />
             </View>
           </>
         )}
