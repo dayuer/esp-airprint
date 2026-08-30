@@ -16,7 +16,7 @@ Debian 版 cupsfilter 产出的 URF 头部页数字段是 0（macOS 版给的是
 """
 import subprocess, sys, struct, os
 
-PPD = '/opt/airprint/ppd/hp136a.ppd'
+PPD = '/opt/stickbox/ppd/hp136a.ppd'
 
 def is_text(path):
     """能按 UTF-8 解码且无控制字符 = 当文本处理"""
@@ -35,7 +35,7 @@ def to_urf(src):
         if is_text(src):
             # 文本走 PangoCairo：CUPS 的 texttopdf 不带 CJK 字体，
             # Debian 的 paps 0.6.7 又写死 /Helvetica，两者中文都是方框。
-            subprocess.run(['python3', '/opt/airprint/bin/text2pdf.py', src, pdf],
+            subprocess.run(['python3', '/opt/stickbox/bin/text2pdf.py', src, pdf],
                            capture_output=True, check=True)
         else:
             with open(pdf, 'wb') as f:

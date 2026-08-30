@@ -1,8 +1,11 @@
 #pragma once
-/* 复制成 cloud_creds.h 后填自己的值。cloud_creds.h 不入库。 */
+/* 复制成 cloud_creds.h 后填自己的值。cloud_creds.h 不入库。
+ *
+ * 这里只放【地址】，不放口令。
+ * 设备密钥（{key_id}.{secret}）是一机一把、由服务端签发的，
+ * 通过配网页录入并存在 NVS 的 cloud/devkey ——绝不编译进固件。
+ * 见 docs/API-cloud-print.md 第 1 节。 */
 
 #define MQTT_URI   "mqtts://your.host:8883"
-#define MQTT_USER  "bridge"
-#define MQTT_PASS  "改成你的口令"
 /* 文档走 HTTPS 流式拉取；端口按自己服务器的占用情况定 */
 #define API_BASE   "https://your.host:9443/api"

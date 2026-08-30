@@ -20,18 +20,19 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 
-# 大 TCP 窗口：打印数据流吞吐关键
-# 每条 TCP 连接在 lwip 里各有一份收发缓冲。iOS 会开 8 条并发轮询连接，
-# 按 5760 算一条约 11KB，8 条就是 88KB——堆直接被吃光，所有客户端都发不出作业。
-# IPP 请求只有 268 字节、应答 4.7KB，2×MSS 完全够用。
+# TCP 缓冲：这两个值是【本地 IPP 时代】定下的，当时要给 iOS 的 8 条并发连接省内存
+# （每条各一份收发缓冲，按 5760 算一条约 11KB，8 条 88KB 直接吃光堆），
+# 而 IPP 请求只有 268 字节，2×MSS 绰绰有余。
+#
+# 云架构下前提变了：只剩一条 HTTPS 下载连接，没有并发压力，而窗口大小直接
+# 决定取件速度。2880 很可能已经是瓶颈而不是保护。
+# ⚠ 待验证：调大到 5760/11520 测端到端取件耗时与空闲堆，确认后再改这里。
 CONFIG_LWIP_TCP_WND_DEFAULT=2880
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
-# LCD 中文
-
-# socket 池：默认 10 个，被监听+轮询连接+netlog+mDNS 占满后 accept 拿不到新 socket，
-# 客户端表现为「连接超时」。提到上限 16。
+# socket 池：默认 10 个。现在的用量是 MQTT + HTTPS 取件 + netlog + 配网期的 httpd，
+# 远没到上限；保持 16 是余量，不是必需。
 CONFIG_LWIP_MAX_SOCKETS=16
 
 # Wi-Fi 缓冲默认按高吞吐场景配，我们是低流量设备（请求 268 字节、应答 4.7KB），
@@ -43,8 +44,6 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
 
-# mDNS 任务默认优先级只有 1，而 IPP 服务器是 5。iOS 开 6 条连接高频轮询时
-# 会把 mDNS 饿死——设备找得到打印机（空闲时解析成功），但要发作业新开连接时
-# 主机名解析失败，表现为「无法联系打印机」。抬到与服务器同级。
-CONFIG_MDNS_TASK_PRIORITY=5
-CONFIG_MDNS_TASK_STACK_SIZE=5120
+# 曾经在这里抬 mDNS 任务优先级来对抗 iOS 轮询把它饿死。云架构下已不再编译
+# mDNS 组件（dependencies.lock 里没有它），那两行是空配置，已删除。
+# 那次教训本身记在 docs/HANDOFF-cloud-print.md 第 2 节。

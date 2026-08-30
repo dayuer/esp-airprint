@@ -1,4 +1,4 @@
-menu "AirPrint Bridge"
+menu "StickBox"
 config BRIDGE_DIAG_NO_USB
     bool "Diagnostic mode: keep USB serial, skip host switch"
     default n

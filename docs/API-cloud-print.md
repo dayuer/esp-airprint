@@ -2,7 +2,7 @@
 
 面向：固件开发（ESP32 侧）、App 开发（上传侧）。
 
-对应服务端：`airprintd`（Go 重写版，设计见
+对应服务端：`stickboxd`（Go 重写版，设计见
 `docs/superpowers/specs/2026-08-30-go-print-server-design.md`）。
 
 **与 v1（`jobsrv.py`）不兼容**，差异清单在第 8 节。固件按本文实现即可，
@@ -73,6 +73,56 @@ App 登录 → POST /api/auth/sms → POST /api/auth/verify → 拿到 session t
 
 **密钥为空时固件不要尝试连接**——直接停在配网态并在 LCD 上提示，
 否则会陷入「连接被拒 → 重连」的死循环。
+
+### 1.3b 配网门户的接口（App 侧必读）
+
+设备在没有 Wi-Fi 凭据时起一个开放热点 + 强制门户。App 连上这个热点之后，
+用下面两个接口把凭据和密钥写进去。**密钥只能这么进设备**——不要手写 NVS，
+那绕过了唯一一条有人维护的路径。
+
+#### `GET /status` —— 拿设备 ID
+
+```json
+{"dev":"f412fa87c9e0","state":0,"ip":"","err":""}
+```
+
+`dev` 是 **STA MAC** 去掉冒号的小写十六进制，与云端协议里的 `{dev}` 完全一致。
+
+⚠ 别拿热点 SSID 的后缀去推 `dev`：SoftAP MAC 和 STA MAC 不是同一个。
+
+#### `POST /connect` —— 写入凭据
+
+字段名是单字母，因为设备侧的解析缓冲只有 384 字节：
+
+```json
+{"s":"我家Wi-Fi","p":"密码","k":"a3f91c04bd77.kJ8x…"}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `s` | Wi-Fi SSID，必填 |
+| `p` | Wi-Fi 密码 |
+| `k` | 设备密钥（45 字符）。**留空表示不动已有的**——只换 Wi-Fi 时用 |
+
+立即返回 `{"ok":1}`，然后轮询 `GET /status` 看试连结果（`state`：0 进行中、
+1 成功、2 失败，失败时 `err` 有原因）。
+
+#### 一个会卡住 App 的时序问题
+
+`k` 要从 `POST /api/device/enroll` 换，而那个请求**需要公网**；但此时手机
+连着的是设备的开放热点，那个热点没有互联网。
+
+顺序只能是：
+
+```
+连上设备热点 → GET /status 拿 dev
+            → 用蜂窝数据调 /api/device/enroll 换 device 密钥
+            → POST /connect 把 Wi-Fi 凭据和密钥一起写进去
+```
+
+手机在「Wi-Fi 无互联网」时通常会把数据走蜂窝，所以这条路是通的，但 App
+必须**显式处理这一段**：不能假设联网请求会自动成功，也不能提示用户
+「请先连接互联网」——那会让用户断开热点，前功尽弃。
 
 ### 1.4 重置
 
@@ -517,6 +567,22 @@ Authorization: Bearer ...
 body 是 `usb_printer_describe()` 加 PJL 探针的完整 JSON。
 **上限 256KB**，超了返回 413。
 
+服务端只挑出建档需要的字段，其余原样落盘。**顶层这几个字段必须有**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `serial` | **是** | 打印机序列号。**没有它就建不了档**，也下发不了怪癖档案 |
+| `vid` / `pid` | 是 | 十六进制，如 `03F0` / `F22A`。机型档案按它们归类 |
+| `make` / `model` | 是 | 厂商与型号串 |
+| `cmd` | 是 | IEEE-1284 的 `CMD:` 字段原文 |
+| `urf_caps` | 是 | URF 能力串，`render-profile` 的来源 |
+
+序列号是主键不是 MAC：`str_desc_serial_num` 每台打印机唯一，设备 MAC 标识的
+是桥。区分「同一个桥换了打印机」和「同一台打印机换了桥」只能靠它。
+
+**上报成功会触发服务端下发 `printer/{dev}/profile`**，所以上报后要留意那个
+topic。没带 `serial` 时上报仍返回 200（档案照样落盘），但不会建档、不会下发。
+
 **响应 200**：`{"ok":1}`
 
 时机：打印机枚举完成 → 等 3 秒让打印机稳定 → 第 0 层 describe → 第 1 层 PJL
@@ -627,6 +693,37 @@ body 是光栅数据。**上限 200MB**（URF 是光栅，整页照片单页就�
 
 **响应 404**：该设备从未上报过 `ident`（没插打印机，或还没枚举完）。
 App 应提示「打印机未就绪」，不要用默认值蒙——尺寸蒙错就是废纸。
+
+### 4.5b `GET /api/devices` —— 列出我名下的设备
+
+角色：`app`。**不需要 `X-Device`**——这个端点就是用来得知有哪些 `dev` 的。
+
+其余所有设备端点都要求调用方已经知道 `{dev}`，而 `dev` 唯一的来源是配网时从
+SoftAP 读到的 MAC。没有这个端点，App 的设备列表只能存在手机本地，用户换手机或
+重装 App 后账号还在、设备还绑着，但 App 再也找不到它，只能重新配网一遍。
+
+**响应 200**
+
+```json
+{
+  "devices": [
+    {"dev":"f412fa87c9e0","name":"工位打印机",
+     "online":true,"seen":1756500000,"state":"ready","bound":1756400000,
+     "printer":{"serial":"CNB9K1P2X4","make":"HP","model":"HP Laser MFP 136a",
+                "attached":true},
+     "queued_jobs":0}
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `name` | enroll 时传的名字，用户可改 |
+| `bound` | 绑定时间戳 |
+| `printer` | 当前插着的打印机。没插时为 `null` |
+| `queued_jobs` | 该设备名下排队中的作业总数 |
+
+一台设备都没有时返回 `{"devices":[]}`，**不是 404**。
 
 ### 4.6 `GET /api/status` —— 查设备与作业
 
@@ -968,8 +1065,21 @@ HOST=mqtt.silkline.id
 DEV=f412fa87c9e0
 ```
 
-**第一步：登录拿 session token。** 开发环境没配短信服务商时，验证码只打日志，
-从 `journalctl -u airprintd` 里取。
+**第一步：登录拿 session token。**
+
+开发/测试环境建议在 `config.json` 里配一个固定手机号，省掉翻日志：
+
+```json
+{"dev_login": {"phone": "13800000000", "code": "424242"}}
+```
+
+配了之后该号码**不发短信、不受限流**，验证码恒为 `code`，可以连续登录。
+只对这一个号码生效，其余号码照常。
+
+⚠ **与 `sms` 同时配置会拒绝启动**——真接了短信服务商就说明是生产环境，
+此时还留着固定号码是配置事故。
+
+没配固定号码时，开发环境的验证码只打日志，从 `journalctl -u stickboxd` 里取。
 
 ```bash
 curl -s -X POST https://$HOST:9443/api/auth/sms -H 'Content-Type: application/json' -d '{"phone":"13800008888"}'
@@ -1050,7 +1160,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$HOST:9443/api/print -H
 
 ## 8. 相对 v1 的差异（固件改动清单）
 
-| # | 项 | v1（`jobsrv.py`） | v2（`airprintd`） | 固件改动 |
+| # | 项 | v1（`jobsrv.py`） | v2（`stickboxd`） | 固件改动 |
 |---|---|---|---|---|
 | 1 | MQTT 认证 | 全网共用 `MQTT_USER`/`MQTT_PASS` 常量 | 每设备一密钥，username=`{dev}` | `cloud_creds.h` 的两个常量 → 从 NVS 读 `cloud/devkey` |
 | 1b | 密钥怎么进设备 | 服务器上签发，用户**手抄** 45 个字符 | App 登录后 enroll，连同 Wi-Fi 凭据一起写进设备 | 配网协议要能接收 `devkey` 字段 |
@@ -1083,6 +1193,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$HOST:9443/api/print -H
   记住档案，插回来即认），但**同时**挂两台以上不支持——需要 USB Hub 支持和
   设备侧多路驱动，ESP32 的堆撑不住。
 - **仲裁界面**。`disputed` 的机型档案只能直接改库，没有管理页。
+- **适配测试向导**（第 4.8~4.10 节的三个端点）。协议已定，服务端尚未实现——
+  当前所有打印机拿到的都是 `src=default` 的保守档案（发 UEL、不做接口复位、
+  保持双向）。
 - **更换手机号**。用新号登录会创建新账号，老账号的设备和历史不跟过去。
 - **国际号码**。只处理中国大陆号码。
 - **多人共享一台打印机**。一台设备只能绑一个账号。

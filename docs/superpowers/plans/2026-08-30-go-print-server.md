@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `server/bin/jobsrv.py` 重写为单个 Go 二进制 `airprintd`，内嵌 MQTT broker，
+**Goal:** 把 `server/bin/jobsrv.py` 重写为单个 Go 二进制 `stickboxd`，内嵌 MQTT broker，
 每设备一密钥，纯 API 无网页。
 
 **Architecture:** 单进程同时监听 `:8883`（内嵌 mochi-mqtt over TLS）和 `:9443`（HTTPS JSON API），
@@ -39,7 +39,7 @@ golang.org/x/crypto/argon2 / 标准库 net/http、crypto/tls。**无 CUPS、无 
 
 | 文件 | 职责 |
 |---|---|
-| `server/go/go.mod` | 模块 `github.com/dayuer/esp-airprint/server/go` |
+| `server/go/go.mod` | 模块 `github.com/dayuer/stickbox/server/go` |
 | `server/go/internal/config/config.go` | 读 `config.json`，字段校验与默认值 |
 | `server/go/internal/store/store.go` | sqlite 打开、建表、迁移、启动恢复 |
 | `server/go/internal/store/job.go` | `jobs` 表读写 |
@@ -62,8 +62,8 @@ golang.org/x/crypto/argon2 / 标准库 net/http、crypto/tls。**无 CUPS、无 
 | `server/go/internal/httpapi/data.go` | `GET /api/job/{id}/data` |
 | `server/go/internal/httpapi/ident.go` | `POST /api/device/{id}/ident` |
 | `server/go/internal/httpapi/status.go` | `GET /api/status` |
-| `server/go/cmd/airprintd/main.go` | 装配、优雅退出 |
-| `server/go/cmd/airprintd/device_cmd.go` | `device add/list/revoke` 子命令 |
+| `server/go/cmd/stickboxd/main.go` | 装配、优雅退出 |
+| `server/go/cmd/stickboxd/device_cmd.go` | `device add/list/revoke` 子命令 |
 | `server/go/integration_test.go` | 端到端：真 broker + 真 HTTP + 假设备 |
 
 拆分原则：`device` 包不 import HTTP 和 MQTT 的任何东西，只依赖两个窄接口。
@@ -83,7 +83,7 @@ golang.org/x/crypto/argon2 / 标准库 net/http、crypto/tls。**无 CUPS、无 
 ```bash
 cd server/go 2>/dev/null || mkdir -p server/go
 cd server/go
-go mod init github.com/dayuer/esp-airprint/server/go
+go mod init github.com/dayuer/stickbox/server/go
 go mod edit -go=1.26
 ```
 
@@ -170,8 +170,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Root != "/opt/airprint" {
-		t.Errorf("Root = %q，期望默认 /opt/airprint", c.Root)
+	if c.Root != "/opt/stickbox" {
+		t.Errorf("Root = %q，期望默认 /opt/stickbox", c.Root)
 	}
 	if c.HTTPAddr != ":9443" {
 		t.Errorf("HTTPAddr = %q，期望默认 :9443", c.HTTPAddr)
@@ -254,7 +254,7 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("config: cert_dir 必填")
 	}
 	if c.Root == "" {
-		c.Root = "/opt/airprint"
+		c.Root = "/opt/stickbox"
 	}
 	if c.HTTPAddr == "" {
 		c.HTTPAddr = ":9443"
@@ -290,7 +290,7 @@ Expected: `ok`
 
 ```json
 {
-  "root": "/opt/airprint",
+  "root": "/opt/stickbox",
   "cert_dir": "/etc/letsencrypt/live/your.host",
   "http_addr": ":9443",
   "mqtt_addr": ":8883",
@@ -982,7 +982,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type fakeKeys struct {
@@ -1151,7 +1151,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type Role string
@@ -1421,7 +1421,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type published struct {
@@ -1644,7 +1644,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Publisher 是 actor 对 MQTT 的窄依赖。
@@ -2483,7 +2483,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type fakeSender struct {
@@ -2626,7 +2626,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Sender 是短信服务商的抽象。测试用假实现——单测和集成测试绝不真发短信。
@@ -2995,7 +2995,7 @@ package auth
 import (
 	"testing"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 func newStore(t *testing.T) *store.Store {
@@ -3088,7 +3088,7 @@ func TestIssueDeviceKeyBindsUser(t *testing.T) {
 ```go
 package auth
 
-import "github.com/dayuer/esp-airprint/server/go/internal/store"
+import "github.com/dayuer/stickbox/server/go/internal/store"
 
 // IssueSession 为一台手机签发一把 app 令牌。
 //
@@ -3231,8 +3231,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type nopPub struct {
@@ -3346,8 +3346,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type Registry struct {
@@ -4082,7 +4082,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Membership 回答「这个 dev 属于这个 user 吗」，带缓存。
@@ -4146,7 +4146,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/device"
 )
 
 type capturedMsg struct {
@@ -4247,8 +4247,8 @@ import (
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/device"
 )
 
 // Router 是 broker 对 registry 的窄依赖。
@@ -4265,7 +4265,7 @@ type Hook struct {
 	ids *idTable
 }
 
-func (h *Hook) ID() string { return "airprint-auth" }
+func (h *Hook) ID() string { return "stickbox-auth" }
 
 func (h *Hook) Provides(b byte) bool {
 	switch b {
@@ -4374,7 +4374,7 @@ import (
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/listeners"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
 type idTable struct {
@@ -4669,11 +4669,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/registry"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/registry"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type Publisher interface {
@@ -4814,7 +4814,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
 func (a *API) handleSMS(w http.ResponseWriter, r *http.Request) {
@@ -4951,11 +4951,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/registry"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/registry"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type testDeps struct {
@@ -5143,7 +5143,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
 var reDev = regexp.MustCompile(`^[0-9a-f]{12}$`)
@@ -5376,10 +5376,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/raster"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/raster"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 const maxJobBytes = 200 << 20 // URF 是光栅，整页照片单页就能到 15MB
@@ -5692,7 +5692,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 func setup(t *testing.T) (*store.Store, string) {
@@ -5818,7 +5818,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type Janitor struct {
@@ -5956,8 +5956,8 @@ git commit -m "feat(server): 作业文件清理——按时长与每设备上限
 ## Task 18: main 装配与运维子命令
 
 **Files:**
-- Create: `server/go/cmd/airprintd/main.go`
-- Create: `server/go/cmd/airprintd/cli.go`
+- Create: `server/go/cmd/stickboxd/main.go`
+- Create: `server/go/cmd/stickboxd/cli.go`
 - Create: `server/go/internal/sms/aliyun.go`
 
 - [ ] **Step 1: 实现短信服务商**
@@ -6012,7 +6012,7 @@ func (a *Aliyun) Send(ctx context.Context, phone, code string) error {
 
 - [ ] **Step 2: 实现 main**
 
-`server/go/cmd/airprintd/main.go`:
+`server/go/cmd/stickboxd/main.go`:
 
 ```go
 package main
@@ -6028,21 +6028,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/broker"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/httpapi"
-	"github.com/dayuer/esp-airprint/server/go/internal/janitor"
-	"github.com/dayuer/esp-airprint/server/go/internal/registry"
-	"github.com/dayuer/esp-airprint/server/go/internal/sms"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
-	"github.com/dayuer/esp-airprint/server/go/internal/tlsx"
-	"github.com/dayuer/esp-airprint/server/go/internal/version"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/broker"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/httpapi"
+	"github.com/dayuer/stickbox/server/go/internal/janitor"
+	"github.com/dayuer/stickbox/server/go/internal/registry"
+	"github.com/dayuer/stickbox/server/go/internal/sms"
+	"github.com/dayuer/stickbox/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/tlsx"
+	"github.com/dayuer/stickbox/server/go/internal/version"
 )
 
 func main() {
-	confPath := flag.String("conf", envOr("AIRPRINT_CONF", "/opt/airprint/config.json"), "配置文件")
+	confPath := flag.String("conf", envOr("STICKBOX_CONF", "/opt/stickbox/config.json"), "配置文件")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{})))
@@ -6216,7 +6216,7 @@ func die(msg string, err error) {
 
 - [ ] **Step 3: 实现子命令**
 
-`server/go/cmd/airprintd/cli.go`:
+`server/go/cmd/stickboxd/cli.go`:
 
 ```go
 package main
@@ -6225,9 +6225,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // runCLI 是运维和排障用的。正常用户走 App 的 enroll，不碰这些。
@@ -6243,7 +6243,7 @@ func runCLI(cfg *config.Config, args []string) error {
 	case "device add":
 		dev := arg(args, 2)
 		if dev == "" {
-			return fmt.Errorf("用法: airprintd device add <dev> [name]")
+			return fmt.Errorf("用法: stickboxd device add <dev> [name]")
 		}
 		token, err := auth.IssueDeviceKey(st, "", dev, arg(args, 3))
 		if err != nil {
@@ -6310,7 +6310,7 @@ func arg(a []string, i int) string {
 }
 ```
 
-`auditWriter()` 实现时指向 `/opt/airprint/audit.log`（`0600`，追加模式）。
+`auditWriter()` 实现时指向 `/opt/stickbox/audit.log`（`0600`，追加模式）。
 
 - [ ] **Step 4: 编译并跑全量测试**
 
@@ -6457,30 +6457,30 @@ git commit -m "test(server): 端到端——完整链路、换打印机、ACL、
 ## Task 20: 部署与迁移
 
 **Files:**
-- Modify: `server/airprint-job.service` → 重写为 `server/airprintd.service`
+- Modify: `server/stickbox-job.service` → 重写为 `server/stickboxd.service`
 - Delete: `server/web/index.html`、`server/bin/jobsrv.py`
 - Create: `server/DEPLOY.md`
 
 - [ ] **Step 1: 写 systemd unit**
 
-`server/airprintd.service`:
+`server/stickboxd.service`:
 
 ```ini
 [Unit]
-Description=AirPrint 云打印服务（Go）
+Description=StickBox 云打印服务（Go）
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/airprint/bin/airprintd -conf /opt/airprint/config.json
+ExecStart=/opt/stickbox/bin/stickboxd -conf /opt/stickbox/config.json
 Restart=always
 RestartSec=3
-User=airprint
-Group=airprint
+User=stickbox
+Group=stickbox
 
-# 证书目录要可读；LE 的私钥默认 root-only，部署时把 airprint 加进对应组
-ReadWritePaths=/opt/airprint
+# 证书目录要可读；LE 的私钥默认 root-only，部署时把 stickbox 加进对应组
+ReadWritePaths=/opt/stickbox
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
@@ -6500,7 +6500,7 @@ WantedBy=multi-user.target
 ```bash
 git rm server/web/index.html
 git rm server/bin/jobsrv.py
-git rm server/airprint-job.service
+git rm server/stickbox-job.service
 ```
 
 `render.py` / `text2pdf.py` 已在早前移到 `tools/reference/` 并标注，不要再删——
@@ -6510,9 +6510,9 @@ git rm server/airprint-job.service
 
 `server/DEPLOY.md` 要覆盖：
 
-1. **构建**：`cd server/go && CGO_ENABLED=0 go build -ldflags "-X .../version.Version=$(git describe --tags --always)" -o airprintd ./cmd/airprintd`
+1. **构建**：`cd server/go && CGO_ENABLED=0 go build -ldflags "-X .../version.Version=$(git describe --tags --always)" -o stickboxd ./cmd/stickboxd`
    （`CGO_ENABLED=0` 是可行的——sqlite 用的是纯 Go 的 modernc）
-2. **首次部署**：建 `airprint` 用户、`/opt/airprint` 目录树、写 `config.json`
+2. **首次部署**：建 `stickbox` 用户、`/opt/stickbox` 目录树、写 `config.json`
    （`chmod 600`）、生成 `phone_pepper` 与 `phone_key`
    （`openssl rand -hex 32`）
 3. **两把密钥的运维含义**（这段必须显眼）：
@@ -6524,9 +6524,9 @@ git rm server/airprint-job.service
    不能像以前那样随手 `scp`
 6. **切换步骤**：
    ```
-   systemctl stop airprint-job.service mosquitto.service
+   systemctl stop stickbox-job.service mosquitto.service
    systemctl disable mosquitto.service
-   systemctl enable --now airprintd.service
+   systemctl enable --now stickboxd.service
    ```
 7. **回滚**：反过来。数据库双向兼容——旧版忽略新增的表和列。
    **前提是 CUPS 还在**，所以别急着卸载，跑稳一个月再清
@@ -6561,7 +6561,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mqtt.silkline.id:9443/a
 
 # 7. 证书热重载：摸一下证书文件，日志里应出现「证书已热重载」
 touch /etc/letsencrypt/live/mqtt.silkline.id/fullchain.pem
-journalctl -u airprintd -n 20 | grep 热重载
+journalctl -u stickboxd -n 20 | grep 热重载
 ```
 
 第 3、4、6 条是这次重写补的三个洞（无设备认证、无 ACL、无入口校验），
@@ -6570,7 +6570,7 @@ journalctl -u airprintd -n 20 | grep 热重载
 - [ ] **Step 5: 提交**
 
 ```bash
-git add server/airprintd.service server/DEPLOY.md
+git add server/stickboxd.service server/DEPLOY.md
 git commit -m "chore(server): systemd unit、部署文档与上线验证清单"
 ```
 

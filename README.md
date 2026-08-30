@@ -1,4 +1,4 @@
-# esp-airprint
+# StickBox
 
 用一块 **ESP32-S3-USB-OTG** 开发板，把只有 USB 口的打印机变成**可以从任何地方投递**
 的网络打印机。实测机型：**HP Laser MFP 136a**。
@@ -46,15 +46,15 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 > ⚠️ 固件一启动就把 USB 数据线切到 host 口去驱动打印机，串口会消失。
 > 第二次之后烧录都要先**按住 BOOT → 点 RST → 松开 BOOT** 进下载模式。
 
-首次上电会开一个 `AirPrint-Setup-XXXX` 热点，手机连上后自动弹配网页。
+首次上电会开一个 `StickBox-Setup-XXXX` 热点，手机连上后自动弹配网页。
 长按 MENU 键（GPIO14）开机可擦除 Wi-Fi 配置。
 
 **服务端**
 
 ```bash
-cp server/config.example.json /opt/airprint/config.json   # 填口令，chmod 600
+cp server/config.example.json /opt/stickbox/config.json   # 填口令，chmod 600
 apt install fonts-noto-cjk python3-gi python3-gi-cairo gir1.2-pango-1.0 python3-cairo
-cp server/airprint-job.service /etc/systemd/system/ && systemctl enable --now airprint-job
+cp server/stickbox-job.service /etc/systemd/system/ && systemctl enable --now stickbox-job
 ```
 
 ## 特性
@@ -63,9 +63,12 @@ cp server/airprint-job.service /etc/systemd/system/ && systemctl enable --now ai
 - **中文正常**：文本走 PangoCairo 排版，字体真嵌进 PDF（CUPS 的 texttopdf 和
   Debian 的 paps 0.6.7 都会输出方框）
 - **打印机状态回传**：面板文字、缺纸、开盖、故障、休眠
-- **多机型**：`printer_profile.c` 一个型号一份配置
+- **多机型**：渲染差异在服务端的 CUPS PPD，USB 层怪癖在固件 `printer_profile.c`
 
 ## 文档
+
+**[docs/SERVER-REQUIREMENTS.md](docs/SERVER-REQUIREMENTS.md)** —— 写给服务端的硬约束清单：
+设备的内存/判活/分片/幂等要求，每条都对应一个真实故障。做服务端先读它。
 
 **[docs/HANDOFF-cloud-print.md](docs/HANDOFF-cloud-print.md)** —— 完整移交文档：
 架构决策、已验证的硬事实（URF / UEL / USB 时序 / PJL 状态）、服务端部署、

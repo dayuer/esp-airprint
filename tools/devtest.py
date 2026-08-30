@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 """
+⚠ 已废弃，跑不通了 —— 留档用，不是当前的测试工具。
+
+本脚本对着设备的 631 端口讲 IPP。设备转向云架构后不再跑 IPP 服务器、
+不再监听任何端口（见 docs/HANDOFF-cloud-print.md 第 2 节），所以这里的
+每一次连接都会被拒。
+
+当前验证链路的方式：往云服务器的上传页投文件，然后看
+  - 设备日志：`nc -ul 5514`
+  - 服务端日志：`journalctl -u stickbox-job -f`
+
+保留原因：下面复刻的那套 iOS 行为（并发轮询、Create-Job/Send-Document
+两段式、chunked + 100-continue、连接内流水线）是实测总结出来的，
+将来若要重新评估本地方案，这份行为清单省一遍逆向。
+
+────────────────────────────────────────────────────────────
+
 dev 测试台：从一个 PDF 出发，完整复刻 iOS 的 AirPrint 行为并逐步校验。
 
   ./devtest.py <桥的IP> [文件.pdf]
@@ -37,7 +53,7 @@ def make_pdf():
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     txt = path.replace(".pdf", ".txt")
     open(txt, "w").write(
-        f"ESP32 AirPrint Bridge - dev test\n\n{stamp}\n\n"
+        f"StickBox - dev test\n\n{stamp}\n\n"
         "This page came from a PDF, rendered to URF, and pushed\n"
         "through the bridge exactly the way an iPhone would.\n")
     subprocess.run(["/usr/sbin/cupsfilter", "-m", "application/pdf", txt],
@@ -131,7 +147,7 @@ def main():
     host = sys.argv[1] if len(sys.argv) > 1 else 'hp136a-bridge.local'
     pdf  = sys.argv[2] if len(sys.argv) > 2 else None
 
-    print(f"\n{Y}══ ESP32 AirPrint 桥 · dev 全流程测试 ══{N}")
+    print(f"\n{Y}══ StickBox · dev 全流程测试 ══{N}")
     print(f"目标: {host}\n")
 
     print("① 准备文档")
