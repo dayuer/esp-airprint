@@ -20,3 +20,27 @@ test('MB 留一位小数', () => {
   expect(formatBytes(15 * 1024 * 1024)).toBe('15.0 MB');
   expect(formatBytes(209715200)).toBe('200.0 MB');   // 服务端上限
 });
+
+// ---- 当前插着 vs 最近插过 ----
+
+import {isPrinterAttached} from '../DeviceDetailScreen';
+
+test('serial 对上才算插着', () => {
+  expect(isPrinterAttached('CNB9K1P2X4', 'CNB9K1P2X4')).toBe(true);
+});
+
+test('没插打印机时 status.serial 是空串——此时拿到的档案是「上次插的那台」', () => {
+  // 服务端的 /printer 在没插时会退回最近插过的那台。把它当成当前插着显示，
+  // 用户就会照着一台不在场的打印机排查，而设备面板上写的是「打印机没连接」。
+  expect(isPrinterAttached('', 'CNB9K1P2X4')).toBe(false);
+  expect(isPrinterAttached(undefined, 'CNB9K1P2X4')).toBe(false);
+});
+
+test('换了一台打印机时不算插着', () => {
+  expect(isPrinterAttached('VNC7J2Q9Y1', 'CNB9K1P2X4')).toBe(false);
+});
+
+test('两边都没有时不算插着', () => {
+  expect(isPrinterAttached('', '')).toBe(false);
+  expect(isPrinterAttached(undefined, undefined)).toBe(false);
+});

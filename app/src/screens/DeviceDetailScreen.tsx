@@ -24,6 +24,23 @@ const JOB_STATE_TEXT: Record<JobSummary['state'], string> = {
 };
 
 /**
+ * 现在真正插着的那台是不是就是这份档案对应的那台。
+ *
+ * 服务端的 GET /api/device/{dev}/printer 在没插打印机时会**退回最近插过的
+ * 那台**，所以拿到 printer 不等于它现在插着。判据只有一个：
+ * /api/status 里的 serial（当前插着的，没插时是空串）。
+ *
+ * 分不清的后果是用户照着一台不在场的打印机排查——而设备面板上明明写着
+ * 「打印机没连接」，两边说法对不上，没人知道该信哪个。
+ */
+export function isPrinterAttached(
+  attachedSerial: string | undefined,
+  printerSerial: string | undefined,
+): boolean {
+  return !!attachedSerial && !!printerSerial && attachedSerial === printerSerial;
+}
+
+/**
  * 把一串档案原语说成人话。
  *
  * 空数组和「没有这个钩子」要分开：空数组是**明确测出来「这一步不需要」**，
@@ -113,7 +130,22 @@ export function DeviceDetailScreen({
     );
   };
 
-  const broken = linkBreakOf(status ? {...device, online: status.device.online} : device);
+  // 当前真正插着的那台。/api/status 的 serial 是权威——空串就是没插。
+  const attachedSerial = status?.device.serial ?? '';
+  // handlePrinter 在没插打印机时会退回「最近插过的那台」，所以拿到 printer
+  // 不等于现在插着。把陈旧状态当成当前状态显示，正是这个 App 最不该犯的错：
+  // 用户会照着一台不在场的打印机去排查。
+  const printerIsAttached = isPrinterAttached(attachedSerial, printer?.printer.serial);
+
+  const broken = linkBreakOf(
+    status
+      ? {
+          ...device,
+          online: status.device.online,
+          printer: printerIsAttached ? device.printer : null,
+        }
+      : device,
+  );
   const jobs = status?.jobs ?? [];
   const suggestTest =
     printer && shouldSuggestTest(printer.profile.src, printer.profile.disputed ?? false);
@@ -153,20 +185,25 @@ export function DeviceDetailScreen({
         </Section>
       )}
 
-      {printer ? (
+      {!printerIsAttached && (
         <Section title="打印机">
+          <Row label="当前" value="没插打印机" tone="accent" />
+          {!!printer && (
+            <Text style={[type.label, styles.note, {color: c.inkMuted}]}>
+              下面是这个桥上次插的那台。适配档案按打印机序列号存，插回去就还认它。
+            </Text>
+          )}
+        </Section>
+      )}
+
+      {printer ? (
+        <Section title={printerIsAttached ? '打印机' : '上次插的打印机'}>
           <Row label="型号" value={printer.printer.model} />
           <Row label="序列号" value={printer.printer.serial} ident />
           <Row label="能力" value={printer.printer.cmd} ident />
           <Row label="光栅参数" value={printer.printer.urf_caps} ident />
         </Section>
-      ) : (
-        status && (
-          <Section title="打印机">
-            <Row label="当前" value="没插打印机" tone="accent" />
-          </Section>
-        )
-      )}
+      ) : null}
 
       {printer && (
         <Section title="适配档案">
