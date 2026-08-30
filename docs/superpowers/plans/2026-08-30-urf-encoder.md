@@ -1867,7 +1867,7 @@ TEST(A4整页按条带写入) {
 app/shared/urf/run_tests.sh
 ```
 
-期望：`全部通过`，35 个测试用例。整个测试跑完应在几秒内。
+期望：`全部通过`，34 个测试用例。整个测试跑完应在几秒内。
 
 - [ ] **Step 3: 提交**
 
@@ -1945,7 +1945,7 @@ git commit -m "docs(urf): 编码器 README"
 
 ## 完成标准
 
-- [ ] `app/shared/urf/run_tests.sh` 全绿，35 个测试用例
+- [ ] `app/shared/urf/run_tests.sh` 全绿，34 个测试用例
 - [ ] `python3 app/tools/urfdump.py /tmp/urf_a4.urf` 输出 `尺寸=4962x7014 dpi=600`、`实际页数 1`
 - [ ] `HEADER-FIELDS.md` 里每个字段都有明确的核对状态，没有含糊其辞的项
 
