@@ -22,10 +22,8 @@
 
 static const char *TAG = "usb_prn";
 
-/* UEL(Universal Exit Language)：HP/三星系的作业分隔符，9 字节。
- * 这是本项目唯一确认有效的「作业结束 / 唤醒」指令——缺它只能打第一份。 */
-static const uint8_t UEL[] = { 0x1b, '%', '-', '1', '2', '3', '4', '5', 'X' };
-#define UEL_LEN (sizeof UEL)
+/* UEL 那 9 个字节现在住在怪癖档案里（profile_script.h 的注释），
+ * 不再是固件常量——新机型要发别的序列，改服务端一行文本即可。 */
 
 /* pjl_send_locked：裸发，调用者必须已持有 s_job_mutex。
  * pjl_send_safe  ：自己抢锁；抢不到就放弃——探针永远不该插队到作业前面去。
@@ -109,6 +107,10 @@ static char s_serial[48];                 /* 打印机序列号——换机场�
  * 不管怪癖来自服务端下发还是编译进来的内置表，这里都只认 prof_script_t：
  * 内置表由 profile_script_from_builtin() 合成成同一种动作序列。
  * 执行路径只有一条，不用维护「有服务端档案」和「没有」两套分支。 */
+static size_t s_job_bytes;      /* 本次作业已送出的字节数。
+                                 * 声明提到这里是因为 run_hook 要用它，
+                                 * 而钩子里发的字节不计入作业字节数。 */
+
 static prof_script_t s_script;
 
 /* ── 本次作业的一次性钩子覆盖（接口文档 3.4 / 规则 9）──
@@ -161,6 +163,10 @@ static void oneshot_clear(void)
     if (s_have_oneshot) ESP_LOGI(TAG, "一次性钩子已销毁，回到档案设定");
     s_have_oneshot = false;
 }
+
+/* run_hook 用到的三样都定义在后面，先声明。 */
+static void printer_port_status(void);
+static void interface_cycle(void);
 
 /* 执行一个钩子。
  *
@@ -218,7 +224,6 @@ static QueueHandle_t            s_evt_q;
 static SemaphoreHandle_t        s_xfer_done, s_job_mutex;
 static usb_transfer_t          *s_xfer;
 static volatile usb_transfer_status_t s_status;
-static size_t                   s_job_bytes;
 static uint32_t                 s_job_crc;
 static uint32_t                 s_job_count;
 

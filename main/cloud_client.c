@@ -636,9 +636,18 @@ static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
         lcd_ui_wifi("云端重连中");
         break;
     case MQTT_EVENT_DATA: {
-        char buf[192];
-        int n = e->data_len < (int)sizeof buf - 1 ? e->data_len : (int)sizeof buf - 1;
+        /* 档案最大 1KB（PROF_MAX_JSON），作业信令只有几十字节。
+         * 放静态区而不是栈上：MQTT 事件任务的栈没那么宽裕，
+         * 而这个回调是单线程的，不会重入。 */
+        static char buf[PROF_MAX_JSON + 1];
+        int cap = (int)sizeof buf - 1;
+        int n = e->data_len < cap ? e->data_len : cap;
         memcpy(buf, e->data, n); buf[n] = 0;
+        /* 截断必须喊出来。静默截断的后果是档案解析失败、悄悄退回内置兜底，
+         * 而现场只会看到「怪癖没生效」，最难归因回这里。 */
+        if (e->data_len > n || (e->total_data_len > e->data_len))
+            ESP_LOGE(TAG, "MQTT 载荷被截断：收到 %d/%d 字节，缓冲 %d",
+                     e->data_len, e->total_data_len, cap);
 
         /* 三个订阅共用这个回调，先按 topic 分流 */
         bool is_topic(const char *t) {

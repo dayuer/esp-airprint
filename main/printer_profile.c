@@ -194,22 +194,5 @@ const printer_profile_t *profile_lookup(uint16_t vid, uint16_t pid)
     if (q & QK_VENDOR_CLASS)
         ESP_LOGW(TAG, "CUPS quirks: 该机型用厂商私有 class，7/1/x 枚举可能认不出");
 
-    /* 最后叠加服务端档案——它的优先级最高，压过内置表和 CUPS quirks。
-     * serial 不符就整份忽略：retain 的旧档案会在换打印机后先到。 */
-    if (s_ovr.valid) {
-        bool match = !s_ovr.serial[0] || (serial && !strcmp(serial, s_ovr.serial));
-        if (match) {
-            s_active.uel_job_end   = s_ovr.uel_job_end;
-            s_active.uel_wake      = s_ovr.uel_wake;
-            s_active.wake_delay_ms = s_ovr.wake_delay_ms;
-            s_active.iface_cycle   = s_ovr.iface_cycle;
-            s_active.unidir        = s_ovr.unidir;
-            ESP_LOGI(TAG, "套用服务端档案（src=%s）", s_ovr.src);
-        } else {
-            ESP_LOGW(TAG, "服务端档案是给 %s 的，当前是 %s——忽略",
-                     s_ovr.serial, serial && *serial ? serial : "(无序列号)");
-        }
-    }
-
     return &s_active;
 }
