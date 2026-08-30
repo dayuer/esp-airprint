@@ -91,6 +91,7 @@ android {
         applicationId "com.airprint"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         versionCode 1
         versionName "1.0"
     }
@@ -119,6 +120,11 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // 仪器测试跑在真机/模拟器上。光栅这条链（PdfRenderer → JNI → shared/urf）
+    // 只有在设备上才成立，开发机上的 jest 和 ctest 都覆盖不到。
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

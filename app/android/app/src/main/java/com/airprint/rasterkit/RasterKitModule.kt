@@ -40,8 +40,26 @@ class RasterKitModule(reactContext: ReactApplicationContext) :
   }
 
   override fun rasterize(options: ReadableMap, promise: Promise) {
-    // 渲染在下一步。先把 JS → TurboModule → JNI → shared/urf 这条链打通，
-    // 链没通的话渲染写完了也验不了。
-    promise.reject("not_implemented", "渲染还没实现")
+    // 光栅是重活：A4 整页要几秒。放主线程会卡住整个界面。
+    Thread {
+      try {
+        val r = PdfRasterizer.rasterize(
+          context = reactApplicationContext,
+          sourceUri = options.getString("sourceUri") ?: "",
+          outputPath = options.getString("outputPath") ?: "",
+          dpi = options.getDouble("dpi").toInt(),
+          pageWidthPx = options.getDouble("pageWidthPx").toInt(),
+          pageHeightPx = options.getDouble("pageHeightPx").toInt(),
+        )
+        promise.resolve(
+          Arguments.createMap().apply {
+            putDouble("pages", r.pages.toDouble())
+            putDouble("bytes", r.bytes.toDouble())
+          },
+        )
+      } catch (e: Throwable) {
+        promise.reject("rasterize_failed", e.message, e)
+      }
+    }.start()
   }
 }

@@ -30,4 +30,5 @@ add_library(rasterkit SHARED
 )
 target_include_directories(rasterkit PRIVATE ${URF_DIR}/include)
 target_compile_options(rasterkit PRIVATE -Wall -Wextra)
-target_link_libraries(rasterkit log)
+# jnigraphics 提供 AndroidBitmap_lockPixels，省掉一份和位图等大的缓冲。
+target_link_libraries(rasterkit log jnigraphics)
