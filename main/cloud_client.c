@@ -68,17 +68,28 @@ typedef struct { char id[40]; uint32_t size; } job_msg_t;
 
 /* JSON 字符串转义：device ID 里有分号、逗号、空格，也可能有引号和反斜杠。
  * 不转义会拼出非法 JSON，服务端整条记录丢掉。 */
-static int jesc(char *dst, size_t cap, const char *src)
+/* 转义到 dst，最多吃 src 的前 max_src 字节。
+ * 通过 consumed 回报实际吃掉多少——分片上传要靠它才能接着上一片继续。 */
+static int jesc_n(char *dst, size_t cap, const char *src, size_t max_src,
+                  size_t *consumed)
 {
-    size_t k = 0;
-    for (const char *p = src; *p && k + 2 < cap; p++) {
-        if (*p == '"' || *p == '\\') { dst[k++] = '\\'; dst[k++] = *p; }
-        else if ((unsigned char)*p < 0x20) { if (k + 6 >= cap) break;
-            k += snprintf(dst + k, cap - k, "\\u%04x", *p); }
-        else dst[k++] = *p;
+    size_t k = 0, i = 0;
+    for (; src[i] && i < max_src && k + 2 < cap; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') { dst[k++] = '\\'; dst[k++] = (char)c; }
+        else if (c < 0x20) {
+            if (k + 6 >= cap) break;
+            k += snprintf(dst + k, cap - k, "\\u%04x", c);
+        } else dst[k++] = (char)c;
     }
     dst[k] = 0;
+    if (consumed) *consumed = i;
     return (int)k;
+}
+
+static int jesc(char *dst, size_t cap, const char *src)
+{
+    return jesc_n(dst, cap, src, (size_t)-1, NULL);
 }
 
 /* ── 机型档案上报 ──
@@ -110,6 +121,12 @@ static const char *PJL_PROBES[] = {
 #define PJL_PROBE_N (sizeof PJL_PROBES / sizeof PJL_PROBES[0])
 #define DUMP_CAP     8192       /* 第 0 层 1.8KB + 六条探针，实测 ~6.5KB */
 #define PROBE_CAP    4096
+/* 单次 HTTPS 载荷上限。压在 4KB 天花板之下留足余量——那个天花板不是协议
+ * 限制，是 mbedtls 在 50KB 堆上分不到握手缓冲（SERVER-REQUIREMENTS 1.1）。 */
+#define IDENT_PART_CAP 3072
+/* 每片最多吃多少源字节。最坏情况下每字节转义成 6 个字符（\u00xx），
+ * 480*6=2880 仍在 IDENT_PART_CAP 内，所以不会因为转义膨胀而溢出。 */
+#define IDENT_PART_SRC 480
 #define IDENT_RETRIES     8     /* 分不到缓冲时重试几次 */
 #define IDENT_RETRY_S    15     /* 每次间隔多少秒——一份作业几十秒就传完 */
 
@@ -238,6 +255,43 @@ static void post_dump(const char *json, int len)
  * 内存是这里唯一的约束：设备只有几十 KB 堆，MQTT 那条 TLS 一直占着，
  * 再开一条 HTTPS 已经很紧。实测握着 7.4KB 上传成功，9.8KB 就失败在
  * 证书验签。所以 VARIABLES 被移出自动采集，把载荷压在 ~6.5KB。 */
+/* 把一条探针回包分片上传。每片一个独立的小请求，设备发完一片就释放。
+ *
+ * 分片名形如 pjl_ID、pjl_VARIABLES_1……服务端按片名单独存，不覆盖第 0 层。
+ * 切片切的是**源字节**而不是转义后的结果：转义会膨胀，按结果切会切在
+ * 半个转义序列中间。 */
+static void post_probe_part(const char *key, const char *raw)
+{
+    size_t rlen = strlen(raw);
+    char *buf = malloc(IDENT_PART_CAP);
+    if (!buf) {
+        ESP_LOGW(TAG, "分不到分片缓冲，跳过探针 %s", key);
+        return;
+    }
+    size_t off = 0;
+    int idx = 0;
+    do {
+        size_t k = 0;
+        if (rlen > IDENT_PART_SRC)
+            k = app(buf, IDENT_PART_CAP, k, "{\"_part\":\"pjl_%s_%d\",", key, idx);
+        else
+            k = app(buf, IDENT_PART_CAP, k, "{\"_part\":\"pjl_%s\",", key);
+        k = app(buf, IDENT_PART_CAP, k, "\"%s\":\"", key);
+
+        size_t eaten = 0;
+        k += jesc_n(buf + k, IDENT_PART_CAP - k - 8, raw + off,
+                    IDENT_PART_SRC, &eaten);
+        k = app(buf, IDENT_PART_CAP, k, "\"}");
+        post_dump(buf, (int)k);
+
+        if (eaten == 0) break;            /* 一个字节都放不下，别死循环 */
+        off += eaten;
+        idx++;
+    } while (off < rlen);
+    ESP_LOGI(TAG, "探针 %s 共 %u 字节，分 %d 片上传", key, (unsigned)rlen, idx + 1);
+    free(buf);
+}
+
 static void ident_task(void *a)
 {
     uint8_t sig;
@@ -274,37 +328,39 @@ static void ident_task(void *a)
             ESP_LOGW(TAG, "第 0 层输出被截断，DUMP_CAP 需要调大");
         size_t k = strlen(buf);
 
-        /* ── 第 1 层：PJL 探针，仅当 device ID 的 CMD: 授权 ── */
-        if (usb_printer_pjl_allowed() && k + 32 < DUMP_CAP) {
-            char *reply = malloc(PROBE_CAP);
-            if (reply) {
-                k--;                                  /* 退掉最外层的 '}' */
-                k = app(buf, DUMP_CAP, k, ",\"pjl\":{");
-                for (size_t i2 = 0; i2 < PJL_PROBE_N; i2++) {
-                    if (DUMP_CAP - k < 512) {
-                        ESP_LOGW(TAG, "缓冲将满，跳过剩余 %u 条探针",
-                                 (unsigned)(PJL_PROBE_N - i2));
-                        break;
-                    }
-                    esp_err_t pe = usb_printer_probe(PJL_PROBES[i2], reply,
-                                                     PROBE_CAP, 6000);
-                    const char *key = PJL_PROBES[i2] + 10;   /* 跳过 "@PJL INFO " */
-                    k = app(buf, DUMP_CAP, k, "%s\"%s\":\"", i2 ? "," : "", key);
-                    k += jesc(buf + k, DUMP_CAP - k - 8, pe == ESP_OK ? reply : "");
-                    k = app(buf, DUMP_CAP, k, "\"");
-                    vTaskDelay(pdMS_TO_TICKS(200));   /* 别把打印机灌太急 */
-                }
-                k = app(buf, DUMP_CAP, k, "}}");
-                free(reply);            /* ← 探针跑完就还，别带进 TLS 握手 */
-            }
-        }
-
+        /* 第 0 层单独上传，不带 _part：服务端据此建档并下发怪癖档案。
+         * 实测约 1.8KB，在 4KB 天花板之内。 */
         char *shrunk = realloc(buf, k + 1);
         if (shrunk) buf = shrunk;
-        ESP_LOGI(TAG, "机型档案 %u 字节，缩容后堆=%u",
+        ESP_LOGI(TAG, "第 0 层 %u 字节，堆=%u",
                  (unsigned)k, (unsigned)esp_get_free_heap_size());
         post_dump(buf, (int)k);
         free(buf);
+        buf = NULL;
+
+        /* ── 第 1 层：PJL 探针，仅当 device ID 的 CMD: 授权 ──
+         *
+         * 一条探针一个请求，大回包再按 IDENT_PART_CAP 切片。
+         * 不能像以前那样拼成一个 6.5KB 的整包发出去：设备发起的 HTTPS
+         * 载荷必须 <4KB（SERVER-REQUIREMENTS 1.1）。实测 7.4KB 在 49KB 堆
+         * 上「勉强成功」，9.8KB 直接报 PK verify failed——看着像证书错，
+         * 其实是 mbedtls 分不到大数缓冲。刚才实机空闲堆只有 50KB。 */
+        if (usb_printer_pjl_allowed()) {
+            char *reply = malloc(PROBE_CAP);
+            if (reply) {
+                for (size_t i2 = 0; i2 < PJL_PROBE_N; i2++) {
+                    esp_err_t pe = usb_printer_probe(PJL_PROBES[i2], reply,
+                                                     PROBE_CAP, 6000);
+                    if (pe != ESP_OK) { reply[0] = 0; }
+                    const char *key = PJL_PROBES[i2] + 10;   /* 跳过 "@PJL INFO " */
+                    post_probe_part(key, reply);
+                    vTaskDelay(pdMS_TO_TICKS(200));   /* 别把打印机灌太急 */
+                }
+                free(reply);
+            } else {
+                ESP_LOGW(TAG, "分不到探针缓冲，跳过第 1 层");
+            }
+        }
 
         publish_ident();
     }
