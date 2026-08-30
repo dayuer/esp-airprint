@@ -1,0 +1,13 @@
+{
+  "migIndex": 1,
+  "data": [
+    {
+      "path": "assets/fonts/Literata-Regular.ttf",
+      "sha1": "3ed541aa21f8ca3fa13de643a397a54f81765fc4"
+    },
+    {
+      "path": "assets/fonts/Literata-SemiBold.ttf",
+      "sha1": "f9b1f802af51199cf6cb0a8206db03fbf98439cb"
+    }
+  ]
+}

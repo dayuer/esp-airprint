@@ -266,6 +266,31 @@ export function createMockServer(state = createState(), opts = {}) {
       });
     }
 
+    // ---- 开发专用，不在文档的契约里 ----
+    //
+    // 驱动 UI 的三种链路状态用。契约测试不许碰这个端点——它一旦被测试依赖，
+    // mock 和真服务端的分歧就会被这层便利掩盖掉。
+    m = /^\/api\/dev\/device\/([0-9a-f]{12})\/state$/.exec(path);
+    if (m && req.method === 'POST') {
+      const {device, error} = ownedDevice(req, userId, m[1]);
+      if (error) return err(res, error[0], error[1]);
+      if (typeof body?.online === 'boolean') device.online = body.online;
+      if (body?.printer === null) device.printer = null;
+      else if (typeof body?.attached === 'boolean' && device.printer)
+        device.printer.attached = body.attached;
+      if (typeof body?.queued_jobs === 'number') {
+        for (let i = 0; i < body.queued_jobs; ++i) {
+          const id = makeId12();
+          state.jobs.set(id, {
+            id, dev: device.dev, serial: device.printer?.serial ?? 'X',
+            name: `文档${i + 1}.pdf`, size: 284160, state: 'queued', bytes: 0, err: '',
+            created: Math.floor(Date.now() / 1000), updated: Math.floor(Date.now() / 1000),
+          });
+        }
+      }
+      return send(res, 200, {ok: 1});
+    }
+
     // 4.6 查设备与作业。最多最近 15 件。
     if (path === '/api/status' && req.method === 'GET') {
       const {device, error} = ownedDevice(req, userId);

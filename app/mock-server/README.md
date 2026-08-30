@@ -35,3 +35,16 @@ URF 编码器那一轮，34 个测试在开发机和 Android 真机上全绿，�
 - **不校验上传尺寸。** 尺寸校验要和 render-profile 联动，放在契约测试里显式构造
   更清楚。
 - **不落盘、不持久化。** 进程退出即丢。
+
+## 开发专用端点
+
+`POST /api/dev/device/{dev}/state` —— 设置链路状态，用来在开发机上驱动 UI 的
+三种形态（全通 / 桥离线 / 没插打印机）：
+
+    curl -X POST $H/dev/device/$DEV/state -H "Authorization: Bearer $TOK" \
+         -H 'Content-Type: application/json' -d '{"online":false}'
+    curl ... -d '{"printer":null}'
+    curl ... -d '{"queued_jobs":2}'
+
+**它不在文档的契约里，契约测试不许碰它。** 一旦被测试依赖，mock 和真服务端
+的分歧就会被这层便利掩盖掉。
