@@ -3,22 +3,23 @@ import {ConnectOutcome, WaitOptions, provisionDevice} from './flow';
 import {PortalNetwork, PortalOptions, readDeviceId, scanNetworks} from './portal';
 
 /**
- * 配网编排。三件事，每一件在不同的网络上：
+ * 配网编排。只连一次热点：
  *
- *   1. 读设备 ID、扫 Wi-Fi   —— 连在配网热点上
- *   2. enroll 换设备密钥      —— **必须回到能上网的网络**
- *   3. 写凭据、等结果         —— 再连一次配网热点
+ *   1. enroll 拿一把**待认领**的密钥  —— 还在自己的网络上，能上网
+ *   2. 连配网热点                     —— 唯一一次
+ *   3. 扫网络、写 Wi-Fi + 密钥        —— 直连设备
+ *   4. 设备重启，热点消失，手机回到原网络
+ *   5. 设备连上并认领密钥，上报 ident
+ *   6. App 刷出设备
  *
- * **顺序是被逼出来的，不是随便排的。**
+ * 关键是第 1 步不需要知道 dev。`POST /api/device/enroll` 不带 dev 时签发
+ * 一把待认领的密钥，设备首次连 MQTT 时用自己的 dev 做 username，服务端
+ * 从那里学到 MAC 并完成绑定。
  *
- * 手机同一时刻只能连一个 AP。连上配网热点就意味着断开原来的 Wi-Fi，
- * 此时只剩蜂窝兜底——没有 SIM、没开数据、Wi-Fi-only 的平板，enroll 就调不通。
- * 所以第 2 步必须在**离开热点之后**做，而不是趁着还连着顺手做掉。
- *
- * 代价是要连两次热点（两次系统确认框）。换来的是不依赖蜂窝。
- *
- * 而 enroll 又非得排在第 1 步之后不可：它要 dev，而 dev 只能从门户的
- * /status 读到（SSID 后缀是 SoftAP MAC，跟 STA MAC 差 1，推不出来）。
+ * 早先的实现要先读 dev 才能 enroll，于是被逼成「连热点读 MAC → 断开去
+ * enroll → 再连热点写入」——手机同一时刻只能连一个 AP，连上配网热点就断开
+ * 了原来的 Wi-Fi，enroll 只能指望蜂窝。服务端本来就能从设备自报的
+ * username 知道 MAC，让 App 先去问设备要是多余的。
  */
 
 export interface PortalInfo {
@@ -36,7 +37,8 @@ export async function readPortal(opts?: PortalOptions): Promise<PortalInfo> {
 }
 
 export interface ProvisionInput {
-  dev: DeviceId;
+  /** 可留空。留空时签发待认领的密钥，绑定发生在设备首次连 MQTT 时。 */
+  dev?: DeviceId;
   ssid: string;
   /** 开放网络传空串。 */
   pass: string;
@@ -50,14 +52,14 @@ export interface ProvisionResult {
   reset: boolean;
 }
 
-export type ProvisionStage = 'enrolling' | 'rejoining' | 'sending' | 'waiting';
+export type ProvisionStage = 'enrolling' | 'joining' | 'sending' | 'waiting';
 
 /**
- * 第二步：换密钥 →（回到热点）→ 写进设备 → 等它连上。
+ * enroll →（连热点）→ 写进设备 → 等它连上。
  *
- * `rejoin` 在 enroll 之后、写凭据之前调用，用来重新加入配网热点。
- * 调用方在读完门户信息后就应该已经离开热点了——那样 enroll 才走得通。
- * 不传 rejoin 就是「一直连着热点」的模式，只在测试里用（假门户在局域网上）。
+ * `join` 在 enroll 之后、写凭据之前调用，用来加入配网热点。这是整个流程里
+ * **唯一**一次连热点。不传 join 就是「已经连着」的模式，测试里用
+ * （假门户在局域网上，不需要真的切网络）。
  *
  * 密钥和 Wi-Fi 凭据一次写进去：分两次写的话设备会先用空密钥重启一轮，
  * 白等 30 秒还多一次失败。
@@ -67,14 +69,14 @@ export async function completeProvisioning(
   input: ProvisionInput,
   opts: WaitOptions = {},
   onStage?: (s: ProvisionStage) => void,
-  rejoin?: () => Promise<unknown>,
+  join?: () => Promise<unknown>,
 ): Promise<ProvisionResult> {
   onStage?.('enrolling');
-  const enrolled = await enrollDevice(api, input.dev, input.name);
+  const enrolled = await enrollDevice(api, input.dev ?? '', input.name);
 
-  if (rejoin) {
-    onStage?.('rejoining');
-    await rejoin();
+  if (join) {
+    onStage?.('joining');
+    await join();
   }
 
   onStage?.('sending');

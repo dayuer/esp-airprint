@@ -33,9 +33,17 @@ export function deleteAccount(cfg: ClientConfig) {
   });
 }
 
-/** 4.1b 配网时为设备签发密钥。409 表示该设备属于其他账号。 */
+/**
+ * 4.1b 签发设备密钥。409 表示该设备属于其他账号。
+ *
+ * `dev` 留空时签发一把**待认领**的密钥——App 在还没连上设备热点、
+ * 还不知道 MAC 的时候就能拿到它。绑定发生在设备首次连 MQTT 时：
+ * 服务端从设备自报的 username 学到 MAC。抢绑防护也挪到了那一刻。
+ */
 export function enrollDevice(cfg: ClientConfig, dev: string, name: string) {
   return request<EnrollResponse>(cfg, {
-    path: '/device/enroll', body: {dev, name}, device: null,
+    path: '/device/enroll',
+    body: dev ? {dev, name} : {name},
+    device: null,
   });
 }

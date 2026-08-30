@@ -157,6 +157,16 @@ export function createMockServer(state = createState(), opts = {}) {
 
     if (path === '/api/device/enroll' && req.method === 'POST') {
       const dev = String(body?.dev ?? '');
+      // dev 可选：不带就签发一把待认领的密钥。绑定发生在设备首次连 MQTT 时
+      // ——服务端从设备自报的 username 学到 MAC（文档 4.1b）。
+      // 这正是「配网只连一次热点」的前提：App 不需要先去问设备要 MAC。
+      if (dev === '') {
+        const key = makeToken();
+        state.deviceKeys.set(key, '');   // 待认领
+        state.unclaimed = state.unclaimed ?? new Map();
+        state.unclaimed.set(key, {user_id: userId, name: String(body?.name ?? '')});
+        return send(res, 200, {device_key: key, dev: '', reset: false});
+      }
       if (!/^[0-9a-f]{12}$/.test(dev)) return err(res, 400, 'bad request');
       const existing = state.devices.get(dev);
       if (existing && existing.user_id !== userId) return err(res, 409, 'device bound');

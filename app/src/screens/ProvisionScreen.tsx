@@ -24,7 +24,7 @@ const SETUP_PREFIX = 'StickBox-Setup-';
 
 type Step =
   | {k: 'intro'}
-  | {k: 'joining'}
+  | {k: 'connecting'}
   | {k: 'reading'}
   | {k: 'pick'; info: PortalInfo}
   | {k: 'password'; info: PortalInfo; net: PortalNetwork}
@@ -32,8 +32,8 @@ type Step =
   | {k: 'result'; outcome: ConnectOutcome; dev: string; reset: boolean; confirmed?: boolean};
 
 const STAGE_TEXT: Record<ProvisionStage, string> = {
-  enrolling: '正在为设备申请密钥',
-  rejoining: '正在重新连回设备热点',
+  enrolling: '正在申请设备密钥',
+  joining: '正在连接设备热点',
   sending: '正在把 Wi-Fi 和密钥写进设备',
   waiting: '设备正在试连，别切走',
 };
@@ -76,20 +76,14 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
 
   const read = useCallback(async () => {
     setError(null);
-    setStep({k: 'joining'});
+    setStep({k: 'connecting'});
     try {
       if (!isWifiSetupAvailable()) throw new Error('这个版本没有原生 Wi-Fi 模块');
       // 系统会弹一个只列出 StickBox-Setup 开头的网络的选择框。
       await joinSetupNetwork(SETUP_PREFIX);
       setStep({k: 'reading'});
       const info = await readPortal(portal);
-
-      // 读完就走。手机同一时刻只能连一个 AP，赖在热点上意味着断开原来的
-      // Wi-Fi，接下来的 enroll 就只能指望蜂窝——没 SIM、没开数据、
-      // Wi-Fi-only 的平板全都过不去。这几秒的等待换的是不依赖蜂窝。
-      leaveSetupNetwork();
-
-      setName(`打印机 ${info.dev.slice(-4).toUpperCase()}`);
+      setName(info.dev ? `打印机 ${info.dev.slice(-4).toUpperCase()}` : '我的打印机');
       setStep({k: 'pick', info});
     } catch (e) {
       fail(e);
@@ -106,9 +100,8 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
         {dev: info.dev, ssid: net.s, pass, name: name.trim() || '未命名设备'},
         portal,
         stage => setStep({k: 'working', stage}),
-        // enroll 之后才连回热点。系统会再弹一次确认框——这是两次连接换
-        // 「不依赖蜂窝」的代价，界面上如实说了。
-        () => joinSetupNetwork(SETUP_PREFIX),
+        // 已经连着热点了，不用再连一次。
+        undefined,
       );
       // 设备已经重启，热点没了，先放开那个网络请求。
       leaveSetupNetwork();
@@ -148,10 +141,9 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
               点下面的按钮，系统会让你确认加入哪一台。
             </Text>
             <Text style={[type.label, styles.hint, {color: c.inkFaint}]}>
-              过程中会连两次热点：第一次读设备信息，然后**断开去申请密钥**，
-              再连第二次把 Wi-Fi 和密钥一起写进去。系统会各弹一次确认框。
-              这么绕是因为连着热点时手机上不了网，申请密钥必须在断开之后做。
-              密钥由 App 自动申请并写入，你不用记也不用抄。
+              只连一次热点。密钥由 App 自动申请并写入，你不用记也不用抄。
+              写完之后设备会重启、热点消失，手机自动回到原来的网络，
+              设备连上后就会出现在列表里。
             </Text>
             <View style={styles.actions}>
               <Button title="搜索并加入设备热点" onPress={read} />
@@ -159,7 +151,7 @@ export function ProvisionScreen({onDone}: {onDone: () => void}) {
           </>
         )}
 
-        {step.k === 'joining' && <Waiting text="正在加入设备的配网热点" />}
+        {step.k === 'connecting' && <Waiting text="正在加入设备的配网热点" />}
         {step.k === 'reading' && <Waiting text="正在读取设备信息" />}
 
         {step.k === 'pick' && (

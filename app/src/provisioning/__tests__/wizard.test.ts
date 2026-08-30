@@ -109,30 +109,45 @@ test('未登录时确认不会抛，只是回答不了', async () => {
     .resolves.toBe(false);
 });
 
-test('密钥必须在重新连回热点之前申请到手', async () => {
+test('密钥必须在连热点之前申请到手', async () => {
   // 顺序错了不会有编译错误，也不会在有蜂窝的手机上失败——只会在没 SIM、
   // 没开数据、或者 Wi-Fi-only 的设备上调不通 enroll，而那时候用户看到的
-  // 只是一句「换密钥时连不上服务器」，完全指不到顺序上。
+  // 只是一句「申请密钥时连不上服务器」，完全指不到顺序上。
   p = await startPortal({verifyMs: 50});
   const order: string[] = [];
 
   await completeProvisioning(
     api,
-    {dev: '9988776655aa', ssid: '办公室 5G', pass: 'x', name: '顺序测试'},
+    {ssid: '办公室 5G', pass: 'x', name: '顺序测试'},   // 不带 dev
     {base: p.base, pollMs: 30, totalMs: 2000},
     s => order.push(`stage:${s}`),
     async () => {
-      order.push('rejoin');
+      order.push('join');
     },
   );
 
   expect(order).toEqual([
-    'stage:enrolling',   // 先换密钥——此时手机在自己的网络上
-    'stage:rejoining',
-    'rejoin',            // 再连回热点
+    'stage:enrolling',   // 先拿密钥——此时手机还在自己的网络上
+    'stage:joining',
+    'join',              // 唯一一次连热点
     'stage:sending',     // 然后才写凭据
     'stage:waiting',
   ]);
+});
+
+test('不带 dev 也能配网——密钥待认领，绑定发生在设备首次连 MQTT 时', async () => {
+  // 这是整个「只连一次热点」的前提：enroll 不需要知道 MAC。
+  // 服务端本来就能从设备自报的 username 学到它。
+  p = await startPortal({verifyMs: 50});
+  const r = await completeProvisioning(
+    api,
+    {ssid: '办公室 5G', pass: 'hunter2', name: '待认领'},
+    {base: p.base, pollMs: 30, totalMs: 2000},
+  );
+  expect(r.outcome.kind).toBe('connected');
+
+  const {lastBody} = await p.probe();
+  expect((lastBody as {k: string}).k).toMatch(/^[0-9a-f]{12}\.[A-Za-z0-9_-]{32}$/);
 });
 
 test('enroll 失败时根本不去连热点，也不会写任何凭据', async () => {
