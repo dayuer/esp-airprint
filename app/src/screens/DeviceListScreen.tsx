@@ -5,6 +5,7 @@ import {ApiFailure, DeviceListItem, describeApiError, listDevices} from '../api'
 import {Button} from '../ui/components/Button';
 import {ConnectionLine, LinkBreak} from '../ui/components/ConnectionLine';
 import {Pressable} from '../ui/components/Pressable';
+import {RasterKit} from '../native/rasterKit';
 import {space, type} from '../ui/theme';
 import {useTheme} from '../ui/useTheme';
 import {useSession} from '../auth/context';
@@ -68,7 +69,17 @@ function DeviceRow({d, onPress}: {d: DeviceListItem; onPress: () => void}) {
   );
 }
 
+/** 原生模块没装上时不要崩——那会让整个设备列表白屏。 */
+function encoderVersionSafe(): string {
+  try {
+    return RasterKit.version();
+  } catch (e) {
+    return `原生光栅模块未加载：${(e as Error).message}`;
+  }
+}
+
 export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}) {
+  const [encoderLine] = useState(encoderVersionSafe);
   const {c} = useTheme();
   const insets = useSafeAreaInsets();
   const session = useSession();
@@ -138,6 +149,8 @@ export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}
 
       <View style={[styles.footer, {borderTopColor: c.rule, paddingBottom: insets.bottom + space.md}]}>
         <Button title="退出登录" variant="quiet" onPress={() => session.getState().signOut()} />
+        {/* 临时：原生光栅链路的可见凭证。阶段三做完就删。 */}
+        <Text style={[type.label, styles.encoder, {color: c.inkFaint}]}>{encoderLine}</Text>
       </View>
     </View>
   );
@@ -159,4 +172,5 @@ const styles = StyleSheet.create({
   emptyHint: {textAlign: 'center', marginTop: space.sm},
   // 浮起的操作条用一条线，不是阴影
   footer: {borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: space.lg, paddingTop: space.md},
+  encoder: {textAlign: 'center', marginTop: space.sm},
 });

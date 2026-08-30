@@ -73,6 +73,15 @@ def enableProguardInReleaseBuilds = false
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
+    // 指向我们自己那份 jni/CMakeLists.txt，它 include 了 RN 的默认设置再追加
+    // shared/urf。**不能指向一个不 include 默认设置的文件**——RN 的 gradle 插件
+    // 只在 path 为 null 时注入默认值，占了它就不会构建 libappmodules.so。
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
+        }
+    }
+
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
