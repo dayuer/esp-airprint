@@ -143,6 +143,32 @@ func (s *Store) DevicesOfUser(userID string) ([]string, error) {
 }
 
 // OwnerOfDevice 是抢绑防护的基础：这台设备当前属于谁。
+// DeviceMeta 是一台设备在 devices 表里的展示信息。
+//
+// name 和 bound 取自那把**还有效**的密钥：重新 enroll 会吊销旧密钥、插一条新的，
+// 所以取 disabled=0 的那条才是当前的名字和绑定时间。
+type DeviceMeta struct {
+	Name  string
+	Bound int64
+	Seen  int64
+}
+
+// DeviceMeta 查一台设备的展示信息。第二个返回值为 false 表示没有有效密钥。
+func (s *Store) DeviceMeta(dev string) (DeviceMeta, bool, error) {
+	var m DeviceMeta
+	err := s.db.QueryRow(
+		`SELECT name, created, last_seen FROM devices
+		  WHERE dev=? AND role='device' AND disabled=0
+		  ORDER BY created DESC LIMIT 1`, dev).Scan(&m.Name, &m.Bound, &m.Seen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeviceMeta{}, false, nil
+	}
+	if err != nil {
+		return DeviceMeta{}, false, err
+	}
+	return m, true, nil
+}
+
 func (s *Store) OwnerOfDevice(dev string) (string, bool, error) {
 	var userID string
 	err := s.db.QueryRow(

@@ -57,6 +57,7 @@ func (a *API) Handler() http.Handler {
 	// app 角色
 	mux.Handle("POST /api/auth/logout", a.requireApp(a.handleLogout))
 	mux.Handle("POST /api/account/delete", a.requireApp(a.handleAccountDelete))
+	mux.Handle("GET /api/devices", a.requireApp(a.handleDevices))
 	mux.Handle("POST /api/device/enroll", a.requireApp(a.handleEnroll))
 	mux.Handle("POST /api/device/{dev}/unbind", a.requireApp(a.handleUnbind))
 	mux.Handle("POST /api/print", a.requireApp(a.handlePrint))
