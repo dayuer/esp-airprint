@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(urf
   src/packbits.cpp
   src/writer.cpp
+  src/validate.cpp
 )
 target_include_directories(urf PUBLIC include)
 target_compile_options(urf PRIVATE -Wall -Wextra -Werror)
@@ -17,6 +18,7 @@ add_executable(urf_tests
   tests/test_main.cpp
   tests/test_packbits.cpp
   tests/test_writer.cpp
+  tests/test_validate.cpp
 )
 target_link_libraries(urf_tests PRIVATE urf)
 # -include 把测试框架头强制注入每个测试 .cpp，省得每个文件都写一遍 include。

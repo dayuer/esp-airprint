@@ -75,4 +75,26 @@ class Writer {
   void FlushPending();
 };
 
+struct ValidateResult {
+  bool ok = false;
+  uint32_t declared_pages = 0;   // 文件头里写的页数
+  uint32_t actual_pages = 0;     // 实际扫出来的页数
+  uint32_t width_px = 0;         // 首页宽
+  uint32_t height_px = 0;        // 首页高
+  std::string error;             // ok 为 false 时说明原因
+};
+
+// 扫描一个 .urf 文件。扫描逻辑与 tools/reference/render.py 的 fix_page_count 一致，
+// 但这里只报告不修改——编码器写出来就该是对的，需要修就说明编码器有 bug。
+ValidateResult Validate(const std::string& path);
+
+// 在上传之前调用。除了整份自洽，还要求首页尺寸等于 render-profile 给的值。
+//
+// 这道断言的意义：URF 是按某台打印机的 dpi 和像素尺寸光栅的，尺寸错了服务端会
+// 返回 400，漏过去就是错位或半页。而服务端不解析文档、设备不认识格式，
+// 没有任何环节会发现——所以本地必须自己拦。
+ValidateResult ValidateForUpload(const std::string& path,
+                                 uint32_t expect_width_px,
+                                 uint32_t expect_height_px);
+
 }  // namespace urf
