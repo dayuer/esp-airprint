@@ -5,3 +5,5 @@ sdkconfig.old
 main/wifi_creds.h
 nvs.bin
 nvs.csv
+main/cloud_creds.h
+server/config.json

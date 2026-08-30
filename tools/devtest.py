@@ -58,7 +58,7 @@ def req(host, op, extra=b'', doc=b''):
     b = struct.pack('>HHI', 0x0200, op, rid()) + b'\x01'
     b += attr(0x47, 'attributes-charset', 'utf-8')
     b += attr(0x48, 'attributes-natural-language', 'zh')   # iOS 中文环境
-    b += attr(0x45, 'printer-uri', f'ipp://{host}:631/ipp/print')
+    b += attr(0x45, 'printer-uri', f'ipp://{host}.:631/ipp/print')   # iOS 带结尾点
     b += attr(0x42, 'requesting-user-name', 'devtest')
     b += extra + b'\x03'
     return b + doc
@@ -104,7 +104,16 @@ def post(sock, host, body, expect=False, timeout=90):
         return st, 'ok'
     return None, 'short'
 
-REQ_ALL = attr(0x44, 'requested-attributes', 'all')
+# iOS 实际点名要的四个属性（真机抓包所得），不是 "all"
+def _multi(tag, name, vals):
+    b = attr(tag, name, vals[0])
+    for v in vals[1:]:
+        b += bytes([tag]) + struct.pack('>H', 0) + struct.pack('>H', len(v)) + v.encode()
+    return b
+
+REQ_ALL = _multi(0x44, 'requested-attributes', [
+    'printer-state-reasons', 'media-source-supported',
+    'printer-input-tray', 'printer-mandatory-job-attributes'])
 
 def poller(host, idx, stop, errs):
     """iOS 的常驻探测连接：一条长连接上反复问属性"""
@@ -119,7 +128,7 @@ def poller(host, idx, stop, errs):
         if not stop.is_set(): errs.append(f'轮询{idx} 异常: {e}')
 
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else '192.168.3.246'
+    host = sys.argv[1] if len(sys.argv) > 1 else 'hp136a-bridge.local'
     pdf  = sys.argv[2] if len(sys.argv) > 2 else None
 
     print(f"\n{Y}══ ESP32 AirPrint 桥 · dev 全流程测试 ══{N}")

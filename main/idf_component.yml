@@ -1,3 +1,2 @@
 dependencies:
-  espressif/mdns: "^1.8"
   espressif/esp32_s3_usb_otg: "*"

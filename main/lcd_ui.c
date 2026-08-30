@@ -40,7 +40,7 @@ static void ui_task(void *a)
     while (1) {
         if (xQueueReceive(s_q, &m, portMAX_DELAY) != pdTRUE) continue;
         switch (m.kind) {
-        case UI_WIFI: set_text(s_lbl_wifi, "网络: ",   m.txt); break;
+        case UI_WIFI: set_text(s_lbl_wifi, "云端: ",   m.txt); break;
         case UI_PRN:  set_text(s_lbl_prn,  "打印机: ", m.txt); break;
         case UI_JOB:  set_text(s_lbl_job,  "作业: ",   m.txt); break;
         case UI_LOG:  do_log(m.txt); break;
@@ -67,8 +67,8 @@ void lcd_ui_init(void)
     mk_label(&s_lbl_job,   78,  lv_color_hex(0xa0ffa0), cjk);
     mk_label(&s_lbl_log,   108, lv_color_hex(0x808080), cjk);
     lv_obj_set_height(s_lbl_log, 128);
-    lv_label_set_text(s_lbl_title, "AirPrint 打印桥");
-    lv_label_set_text(s_lbl_wifi,  "网络: 启动中");
+    lv_label_set_text(s_lbl_title, "云打印桥");
+    lv_label_set_text(s_lbl_wifi,  "云端: 连接中");
     lv_label_set_text(s_lbl_prn,   "打印机: 等待");
     lv_label_set_text(s_lbl_job,   "作业: 无");
     lv_label_set_text(s_lbl_log,   "");
@@ -96,7 +96,7 @@ static void post(uint8_t kind, const char *t)
     xQueueSend(s_q, &m, 0);          /* 满了就丢，绝不阻塞调用方 */
 }
 
-void lcd_ui_wifi(const char *t) { post(UI_WIFI, t); }
+void lcd_ui_wifi(const char *t) { post(UI_WIFI, t); }   /* 现在显示云端连接状态 */
 void lcd_ui_prn(const char *t)  { post(UI_PRN,  t); }
 void lcd_ui_job(const char *t)  { post(UI_JOB,  t); }
 

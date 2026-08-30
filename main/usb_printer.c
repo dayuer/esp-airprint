@@ -8,14 +8,20 @@
 #include "driver/gpio.h"
 #include "usb/usb_host.h"
 #include "usb_printer.h"
+#include "esp_timer.h"
 #include "lcd_ui.h"
 #include "joblog.h"
+#include "printer_profile.h"
 #include "driver/gpio.h"
 #include "esp_rom_crc.h"
 
 static const char *TAG = "usb_prn";
 
-static void pjl_task(void *a);   /* 任务包装：跑完必须 vTaskDelete，否则复位 */
+/* UEL(Universal Exit Language)：HP/三星系的作业分隔符，9 字节。
+ * 这是本项目唯一确认有效的「作业结束 / 唤醒」指令——缺它只能打第一份。 */
+static const uint8_t UEL[] = { 0x1b, '%', '-', '1', '2', '3', '4', '5', 'X' };
+#define UEL_LEN (sizeof UEL)
+
 static void pjl_send(const char *cmd);
 static uint8_t printer_port_status_raw(void);
 
@@ -28,6 +34,51 @@ static uint8_t                  s_itf, s_ep, s_ep_in;
 static uint16_t                 s_mps, s_mps_in;
 static volatile bool            s_connected;
 static volatile bool            s_asleep;   /* 由 USTATUS 推送更新 */
+static usb_prn_status_t         s_st;       /* 打印机自报状态，见 .h */
+static int      s_base_code;                /* 同一包里的基础状态，非 Printing */
+static char     s_base_disp[32];
+static int64_t  s_job_done_us;              /* 作业发完的时刻，用于兜底降级 */
+
+void usb_printer_status(usb_prn_status_t *out)
+{
+    *out = s_st;
+    out->connected = s_connected;
+    out->asleep    = s_asleep;
+}
+
+/* 一个 IN 包里可能连着多条 USTATUS（例如 Ready 紧跟 Power Save），
+ * 只有最后一条代表当前状态。 */
+static void parse_ustatus(const char *txt)
+{
+    const char *p = txt, *rec = NULL;
+    while ((p = strstr(p, "CODE=")) != NULL) { rec = p; p += 5; }
+    if (!rec) return;
+
+    int  code   = atoi(rec + 5);
+    bool online = strstr(rec, "ONLINE=TRUE") != NULL;
+    char disp[sizeof s_st.display];
+    disp[0] = 0;
+    const char *d = strstr(rec, "DISPLAY=\"");
+    if (d) {
+        d += 9;
+        const char *e = strchr(d, '\"');
+        size_t n = e ? (size_t)(e - d) : strlen(d);
+        if (n >= sizeof disp) n = sizeof disp - 1;
+        memcpy(disp, d, n);
+        disp[n] = 0;
+    }
+    if (code != 10023) {                    /* 10023=Printing 是瞬时态，不作基础 */
+        s_base_code = code;
+        strcpy(s_base_disp, disp);
+    }
+    if (code != s_st.code || online != s_st.online || strcmp(disp, s_st.display)) {
+        s_st.code   = code;
+        s_st.online = online;
+        strcpy(s_st.display, disp);
+        s_st.seq++;
+    }
+}
+static const printer_profile_t *s_prof;   /* 当前机型档案 */
 static QueueHandle_t            s_evt_q;
 static SemaphoreHandle_t        s_xfer_done, s_job_mutex;
 static usb_transfer_t          *s_xfer;
@@ -164,9 +215,21 @@ static void status_reader_task(void *a)
             ESP_LOGW(TAG, "打印机回传 %d 字节: %s", n, txt);
             /* 打印机开了 USTATUS 后会主动推状态——这才是真正的休眠指示器。
              * 那个 GET_PORT_STATUS 字节在休眠时照样报 0x18，毫无用处。 */
+            parse_ustatus(txt);
             if (strstr(txt, "Power Save"))   { s_asleep = true;  lcd_ui_prn("休眠中"); }
             else if (strstr(txt, "Ready"))   { s_asleep = false; lcd_ui_prn("就绪"); }
             else if (strstr(txt, "Printing")) { s_asleep = false; lcd_ui_prn("打印中"); }
+        }
+        /* 打印机只在状态变化时推 USTATUS。我们把活发完后它常常不再补
+         * 一条 Ready，面板状态就永远卡在 Printing。作业结束 20 秒后仍是
+         * Printing，就退回它自己在同一包里给出的基础状态——不是我们编的。 */
+        if (s_st.code == 10023 && s_base_code && s_job_done_us &&
+            esp_timer_get_time() - s_job_done_us > 20LL * 1000 * 1000) {
+            s_st.code = s_base_code;
+            strcpy(s_st.display, s_base_disp);
+            s_st.seq++;
+            s_job_done_us = 0;
+            ESP_LOGI(TAG, "作业已结束，状态退回 %s", s_base_disp);
         }
         vTaskDelay(pdMS_TO_TICKS(150));
     }
@@ -205,53 +268,20 @@ static uint8_t printer_port_status_raw(void)
 static void printer_port_status(void)
 {
     uint8_t st = printer_port_status_raw();
+    if (st) {
+        bool po = !!(st & 0x20), er = !(st & 0x08);
+        if (po != s_st.paper_out || er != s_st.error) {
+            s_st.paper_out = po; s_st.error = er; s_st.seq++;
+        }
+    }
     if (st) ESP_LOGI(TAG, "端口状态 0x%02X  纸尽=%d 选中=%d 无错=%d",
                      st, !!(st & 0x20), !!(st & 0x10), !!(st & 0x08));
     else    ESP_LOGW(TAG, "端口状态读取失败");
 }
 
-/* 打印机类 SOFT_RESET(bRequest=2)：把设备侧 buffer 和 bulk toggle 打回默认。
- * CUPS 对全体三星引擎（含 HP Laser 13x）强制每作业后执行，收件人先用
- * RECIPIENT_OTHER，STALL 了再退回 RECIPIENT_INTERFACE。 */
-static bool soft_reset_once(uint8_t bmRequestType)
-{
-    usb_transfer_t *x;
-    if (usb_host_transfer_alloc(64, 0, &x) != ESP_OK) return false;
-    usb_setup_packet_t *sp = (usb_setup_packet_t *)x->data_buffer;
-    sp->bmRequestType = bmRequestType;
-    sp->bRequest      = 2;             /* SOFT_RESET */
-    sp->wValue        = 0;
-    sp->wIndex        = s_itf;
-    sp->wLength       = 0;
-    x->device_handle    = s_dev;
-    x->bEndpointAddress = 0;
-    x->callback         = ctrl_cb;
-    x->num_bytes        = sizeof(usb_setup_packet_t);
-    x->timeout_ms       = 5000;
-    bool ok = false;
-    if (usb_host_transfer_submit_control(s_client, x) == ESP_OK &&
-        xSemaphoreTake(s_ctrl_done, pdMS_TO_TICKS(5500)) == pdTRUE) {
-        ok = (x->status == USB_TRANSFER_STATUS_COMPLETED);
-    }
-    usb_host_transfer_free(x);
-    return ok;
-}
-
-static void printer_soft_reset(void)
-{
-    if (!s_connected) return;
-    if (soft_reset_once(0x23)) { ESP_LOGI(TAG, "软复位成功 (RECIP_OTHER)"); return; }
-    if (soft_reset_once(0x21)) { ESP_LOGI(TAG, "软复位成功 (RECIP_INTERFACE)"); return; }
-    ESP_LOGW(TAG, "软复位被拒（该机型不支持，跳过）");
-}
-
-/* 接口重置：清空在途传输 + release/claim。
- * 必须在「下一份作业开始前」做，不能在上一份写完就做——那时打印机还在渲染，
- * 半路抽掉接口会把正在打的页面弄丢。 */
 /* 标准请求 CLEAR_FEATURE(ENDPOINT_HALT)：USB 2.0 §9.4.5 规定它会把
- * **设备侧**该端点的 data toggle 复位到 DATA0。这是唯一能让设备跟着
- * 主机一起归零的手段——ESP-IDF 的 claim 只动主机侧，单独用会制造失配，
- * 表现就是每份作业开头 64 字节被设备当重传丢弃 => 打出空白页。 */
+ * **设备侧**该端点的 data toggle 复位到 DATA0。ESP-IDF 的 claim 只动主机侧，
+ * 两边必须同时归零才对齐。 */
 static bool clear_ep_halt(uint8_t ep)
 {
     if (!ep) return true;
@@ -276,33 +306,18 @@ static bool clear_ep_halt(uint8_t ep)
     return ok;
 }
 
-/* 已确认：只有「开机后第一份」能可靠打印。release/claim + CLEAR_FEATURE 都不足以
- * 把打印机恢复到刚枚举完的状态。这里用最彻底的办法——断掉 host 口 VBUS，
- * 逼它重新枚举，等于给每份作业一个真正的「第一份」。 */
-#define PIN_USB_DEV_VBUS_EN GPIO_NUM_12
-
-static void usb_power_cycle(void)
+/* 发一条 PJL 命令。两个必须遵守的点：
+ *  1) 长度用 snprintf 的返回值，绝不硬编码——写错会多发越界垃圾字节；
+ *  2) 结尾必须再补一个 UEL，否则打印机停在 PJL 模式等后续数据，
+ *     面板显示 printing 不动，还会把命令文本当正文打出来。 */
+static void pjl_send(const char *cmd)
 {
-    ESP_LOGW(TAG, "VBUS 断电重枚举…");
-    s_in_paused = true;
-    for (int i = 0; i < 100 && !s_in_idle; i++) vTaskDelay(pdMS_TO_TICKS(20));
-
-    if (s_dev) {
-        usb_host_interface_release(s_client, s_dev, s_itf);
-        usb_host_device_close(s_client, s_dev);
-        s_dev = NULL;
-    }
-    s_connected = false;
-    gpio_set_level(PIN_LED_GREEN, 0);
-
-    gpio_set_level(PIN_USB_DEV_VBUS_EN, 0);     /* 断电 */
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    gpio_set_level(PIN_USB_DEV_VBUS_EN, 1);     /* 上电，enum_task 会重新认到 */
-    s_in_paused = false;
-
-    for (int i = 0; i < 400 && !s_connected; i++) vTaskDelay(pdMS_TO_TICKS(25));
-    ESP_LOGW(TAG, "重枚举%s（耗时内）", s_connected ? "成功" : "超时失败");
-    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!s_connected) return;
+    char buf[128];
+    int n = snprintf(buf, sizeof buf, "\x1b%%-12345X%s\r\n\x1b%%-12345X", cmd);
+    size_t saved = s_job_bytes;
+    usb_printer_job_write((const uint8_t *)buf, n);
+    s_job_bytes = saved;
 }
 
 static void interface_cycle(void)
@@ -341,161 +356,6 @@ static void interface_cycle(void)
     s_in_paused = false;
 }
 
-/* ---- PJL 查询探针 ----
- * 往 bulk OUT 发 PJL 命令，再从 bulk IN 读回文本。三星系引擎多半支持
- * @PJL INFO 系列，能拿到机型、状态、耗材余量。 */
-static int pjl_read(char *out, int cap, int total_ms)
-{
-    if (!s_ep_in) return 0;
-    usb_transfer_t *x;
-    if (usb_host_transfer_alloc(512, 0, &x) != ESP_OK) return 0;
-    int len = 0, waited = 0;
-    while (waited < total_ms && len < cap - 1) {
-        x->device_handle    = s_dev;
-        x->bEndpointAddress = s_ep_in;
-        x->callback         = in_cb;
-        x->num_bytes        = 512;
-        x->timeout_ms       = 800;
-        if (usb_host_transfer_submit(x) != ESP_OK) break;
-        if (xSemaphoreTake(s_in_done, pdMS_TO_TICKS(1500)) != pdTRUE) break;
-        waited += 800;
-        if (s_in_status == USB_TRANSFER_STATUS_COMPLETED && x->actual_num_bytes > 0) {
-            int n = x->actual_num_bytes;
-            if (n > cap - 1 - len) n = cap - 1 - len;
-            memcpy(out + len, x->data_buffer, n);
-            len += n;
-            waited = 0;                      /* 还在出数据就继续等 */
-        }
-    }
-    out[len] = 0;
-    usb_host_transfer_free(x);
-    return len;
-}
-
-void usb_printer_pjl_probe(void)
-{
-    /* INFO ID 已证实有回应。STATUS/SUPPLIES 没回，试几种常见写法：
-     * 有些固件要求先发一行裸 @PJL 进入 PJL 上下文才认后续查询。 */
-    static const char *queries[] = {
-        "@PJL INFO ID",
-        "@PJL\r\n@PJL INFO STATUS",
-        "@PJL\r\n@PJL INFO SUPPLIES",
-        "@PJL\r\n@PJL INFO PAGECOUNT",
-        "@PJL\r\n@PJL INFO VARIABLES",
-        "@PJL\r\n@PJL INFO PRODINFO",
-        "@PJL\r\n@PJL INFO MEMORY",
-        "@PJL\r\n@PJL USTATUS DEVICE=ON",
-    };
-    if (!s_connected) { ESP_LOGW(TAG, "PJL 探针：打印机未连接"); return; }
-
-    xSemaphoreTake(s_job_mutex, portMAX_DELAY);
-    s_in_paused = true;
-    for (int i = 0; i < 100 && !s_in_idle; i++) vTaskDelay(pdMS_TO_TICKS(20));
-
-    char *resp = malloc(1400);
-    if (!resp) { s_in_paused = false; xSemaphoreGive(s_job_mutex); return; }
-
-    for (size_t q = 0; q < sizeof queries / sizeof queries[0]; q++) {
-        char cmd[96];
-        int n = snprintf(cmd, sizeof cmd, "\x1b%%-12345X%s\r\n", queries[q]);
-        s_job_bytes = 0; s_job_crc = 0;
-        if (usb_printer_job_write((const uint8_t *)cmd, n) != ESP_OK) {
-            ESP_LOGW(TAG, "PJL 发送失败: %s", queries[q]);
-            continue;
-        }
-        int got = pjl_read(resp, 1400, 2500);
-        if (got <= 0) {
-            ESP_LOGW(TAG, "PJL %s → 无回应", queries[q]);
-            continue;
-        }
-        ESP_LOGI(TAG, "PJL %s → %d 字节:", queries[q], got);
-        /* 逐行打出来，日志一行别太长 */
-        char *line = resp;
-        for (char *c = resp; *c; c++) {
-            if (*c == '\r' || *c == '\n' || *c == '\f') {
-                *c = 0;
-                if (line[0]) ESP_LOGI(TAG, "  | %s", line);
-                line = c + 1;
-            }
-        }
-        if (line[0]) ESP_LOGI(TAG, "  | %s", line);
-    }
-    free(resp);
-
-    /* 收尾：UEL 让打印机退出 PJL 上下文 */
-    s_job_bytes = 0;
-    usb_printer_job_write((const uint8_t *)"\x1b%-12345X", 9);
-    s_job_bytes = 0; s_job_crc = 0;
-
-    s_in_paused = false;
-    xSemaphoreGive(s_job_mutex);
-    ESP_LOGI(TAG, "PJL 探针结束");
-}
-
-static void pjl_task(void *a)
-{
-    vTaskDelay(pdMS_TO_TICKS(1200));      /* 等打印机自己就绪 */
-    usb_printer_pjl_probe();
-    vTaskDelete(NULL);                    /* 少这一句 = 必崩重启 */
-}
-
-/* ---- 唤醒指令对照实验 ----
- * 逐条发送候选指令，每条之后读端口状态，看哪条能把打印机从休眠拽起来。
- * 判据：bit3(无错) 由 0 变 1，或状态字节本身发生变化。 */
-void usb_printer_wake_probe(void)
-{
-    static const struct { const char *name; const char *cmd; int len; } tries[] = {
-        { "UEL 单发",            "\x1b%-12345X", 9 },
-        { "PJL INFO ID",         "\x1b%-12345X@PJL INFO ID\r\n", 25 },
-        { "PJL USTATUS",         "\x1b%-12345X@PJL USTATUS DEVICE=ON\r\n", 35 },
-        { "PJL ECHO",            "\x1b%-12345X@PJL ECHO WAKEUP\r\n", 29 },
-        { "PJL RDYMSG",          "\x1b%-12345X@PJL RDYMSG DISPLAY=\"READY\"\r\n", 40 },
-        { "PJL INITIALIZE",      "\x1b%-12345X@PJL INITIALIZE\r\n", 28 },
-        { "PJL DEFAULT TIMEOUT", "\x1b%-12345X@PJL SET POWERSAVE=OFF\r\n", 35 },
-        { "裸换页符 FF",          "\f", 1 },
-        { "PCL 复位 ESC-E",       "\x1bE", 2 },
-    };
-
-    if (!s_connected) { ESP_LOGW(TAG, "唤醒实验：打印机未连接"); return; }
-    xSemaphoreTake(s_job_mutex, portMAX_DELAY);
-
-    uint8_t before = printer_port_status_raw();
-    ESP_LOGW(TAG, "════ 唤醒实验开始，初始状态=0x%02X (无错=%d) ════",
-             before, !!(before & 0x08));
-
-    for (size_t i = 0; i < sizeof tries / sizeof tries[0]; i++) {
-        size_t saved = s_job_bytes;
-        esp_err_t r = usb_printer_job_write((const uint8_t *)tries[i].cmd, tries[i].len);
-        s_job_bytes = saved;
-        vTaskDelay(pdMS_TO_TICKS(2500));          /* 给打印机反应时间 */
-        uint8_t st = printer_port_status_raw();
-        ESP_LOGW(TAG, "[%zu] %-20s 发送=%s 状态 0x%02X→0x%02X %s",
-                 i + 1, tries[i].name, r == ESP_OK ? "OK" : "失败",
-                 before, st,
-                 (st != before) ? "★ 状态变了" : "");
-        if ((st & 0x08) && !(before & 0x08)) {
-            ESP_LOGW(TAG, "★★★ 「%s」把它唤醒了 ★★★", tries[i].name);
-        }
-        before = st;
-    }
-    ESP_LOGW(TAG, "════ 唤醒实验结束 ════");
-    xSemaphoreGive(s_job_mutex);
-}
-
-/* 发一条 PJL 命令。两个坑：
- *  1) 长度必须用 strlen，硬编码很容易多发越界垃圾字节；
- *  2) 结尾必须再补一个 UEL，否则打印机停在 PJL 模式里等后续数据，
- *     面板显示 "printing" 不动，还可能把命令文本当正文打出来。 */
-static void pjl_send(const char *cmd)
-{
-    if (!s_connected) return;
-    char buf[128];
-    int n = snprintf(buf, sizeof buf, "\x1b%%-12345X%s\r\n\x1b%%-12345X", cmd);
-    size_t saved = s_job_bytes;
-    usb_printer_job_write((const uint8_t *)buf, n);
-    s_job_bytes = saved;
-}
-
 void usb_printer_start(void)
 {
     s_evt_q     = xQueueCreate(8, sizeof(uint8_t));
@@ -528,7 +388,7 @@ esp_err_t usb_printer_job_begin(void)
     if (!s_connected) { xSemaphoreGive(s_job_mutex); return ESP_ERR_INVALID_STATE; }
 
     /* 第二份及以后：先给上一份留出打印时间，再重置接口开新作业 */
-    if (s_job_count++ > 0) {
+    if (s_job_count++ > 0 && s_prof && s_prof->iface_cycle) {
         joblog_phase(JOB_RESET_IF, 0, 0);
         printer_port_status();
         interface_cycle();
@@ -537,13 +397,13 @@ esp_err_t usb_printer_job_begin(void)
     /* 唤醒：打印机收到数据就会醒（实测发指令后它真的动了）。
      * 注意：GET_PORT_STATUS 测不出休眠——休眠时它照样报 0x18(选中+无错)，
      * 所以别再写「等状态位变化」的循环，那是空等。发个无害的 UEL 敲门 + 固定延时即可。 */
-    if (s_connected) {
+    if (s_connected && s_prof && s_prof->uel_wake) {
         joblog_phase(JOB_WAKING, 0, 0);
         size_t saved = s_job_bytes;
-        usb_printer_job_write((const uint8_t *)"\x1b%-12345X", 9);
+        usb_printer_job_write(UEL, UEL_LEN);
         s_job_bytes = saved;
-        vTaskDelay(pdMS_TO_TICKS(1500));      /* 给激光机预热的时间 */
-        lcd_ui_prn("HP 136a 已就绪");
+        vTaskDelay(pdMS_TO_TICKS(s_prof->wake_delay_ms));
+        lcd_ui_prn("就绪");
     }
 
     s_job_bytes = 0;
@@ -606,15 +466,15 @@ void usb_printer_job_end(void)
     /* 作业结束信号：USB 短包只表示「传输结束」，不表示「作业结束」。
      * 打印机会一直等后续数据（现象：必须手动按取消键才能打下一份）。
      * HP/三星系的作业分隔符是 UEL —— 驱动都会在作业末尾发它。 */
-    if (s_connected && s_job_bytes > 0) {
-        static const uint8_t uel[] = "\x1b%-12345X";   /* 9 字节，不含结尾 NUL */
+    if (s_connected && s_job_bytes > 0 && (!s_prof || s_prof->uel_job_end)) {
         size_t saved = s_job_bytes;
         joblog_phase(JOB_UEL, saved, saved);
-        if (usb_printer_job_write(uel, sizeof(uel) - 1) == ESP_OK)
+        if (usb_printer_job_write(UEL, UEL_LEN) == ESP_OK)
             ESP_LOGI(TAG, "已发送 UEL 作业结束符");
         else
             ESP_LOGW(TAG, "UEL 发送失败");
         s_job_bytes = saved;      /* UEL 不计入作业字节数，便于与源文件核对 */
+        s_job_done_us = esp_timer_get_time();
     }
     /* 作业结束后绝不碰端点：此刻最后一个短包可能还没物理发完，
      * halt/flush 会把尾巴掐掉（症状：打印机报 Decoding Fail，位置在流末尾）。

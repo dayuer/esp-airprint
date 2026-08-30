@@ -12,11 +12,12 @@
 #include "esp_netif.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
-#include "mdns.h"
 #include "usb_printer.h"
+#include "cloud_client.h"
 #include "joblog.h"
 #include "provision.h"
 #include "usb_printer.h"
+#include "cloud_client.h"
 #include "joblog.h"
 #include "lcd_ui.h"
 #include "driver/gpio.h"
@@ -28,30 +29,6 @@ static char s_ip[16];
 static char s_ssid[33], s_pass[65];
 #define EVT_GOT_IP BIT0
 
-static void start_mdns(const uint8_t mac[6]);
-void ipp_server_start(const char *ip, const uint8_t mac[6]);
-
-/* mdns/ipp 初始化不能在事件任务里做（栈只有 3.5KB，会爆栈 panic），单开任务 */
-static void services_task(void *arg)
-{
-    xEventGroupWaitBits(s_evt, EVT_GOT_IP, pdFALSE, pdFALSE, portMAX_DELAY);
-    extern void netlog_start(void);
-    netlog_start();
-    uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
-
-    /* IPP 服务先起，但 mDNS 广播要等打印机真的就绪——否则客户端会在
-     * 桥还没准备好时就来试作业，被拒一次就把这台打印机拉黑。 */
-    ipp_server_start(s_ip, mac);
-    for (int i = 0; i < 60 && !usb_printer_connected(); i++)
-        vTaskDelay(pdMS_TO_TICKS(500));
-    ESP_LOGI(TAG, "打印机%s，开始广播", usb_printer_connected() ? "已就绪" : "未就绪(超时)");
-    start_mdns(mac);
-    joblog_boot_report();
-    ESP_LOGI(TAG, "网络服务全部就绪");
-    lcd_ui_log("mDNS+IPP 服务已就绪");
-    vTaskDelete(NULL);
-}
 
 #define PIN_USB_MODE_SEL      GPIO_NUM_18
 #define PIN_USB_LIMIT_EN      GPIO_NUM_17
@@ -60,7 +37,6 @@ static void services_task(void *arg)
 #define PIN_LED_GREEN         GPIO_NUM_15
 #define PIN_LED_YELLOW        GPIO_NUM_16
 
-void ipp_server_start(const char *ip, const uint8_t mac[6]);
 
 static void board_usb_host_power(void)
 {
@@ -73,53 +49,31 @@ static void board_usb_host_power(void)
     ESP_ERROR_CHECK(gpio_config(&io));
     gpio_set_level(PIN_LED_GREEN, 0);
     gpio_set_level(PIN_LED_YELLOW, 0);
+
+    /* 时序照抄厂商 BSP 的 bsp_usb_host_start()，顺序不能改：
+     *   ① 先把 D+/D- 切到 host 连接器
+     *   ② 设限流标志
+     *   ③ 断电 10ms（干净的上电沿，打印机才会重新枚举）
+     *   ④ 上电
+     * 之前写反了——先上电、再切数据线，打印机看到 VBUS 时数据线还挂在
+     * DEV 口上，枚举窗口就错过了。 */
+    gpio_set_level(PIN_USB_MODE_SEL, 1);            /* ① */
+    gpio_set_level(PIN_USB_LIMIT_EN, 1);            /* ② 必须为 1。
+        厂商 bsp_usb_host_start() 的典型调用就是 limit_500mA=true。
+        实测设 0 之后打印机不再枚举——这个脚同时是负载开关的使能，
+        设 0 等于切断 host 口的 VBUS，不只是"不限流"。 */
+    gpio_set_level(PIN_USB_DEV_VBUS_EN, 0);         /* ③ */
     gpio_set_level(PIN_BATTERY_BOOST_EN, 0);
-    gpio_set_level(PIN_USB_DEV_VBUS_EN, 1);
-    gpio_set_level(PIN_USB_LIMIT_EN, 1);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    gpio_set_level(PIN_USB_MODE_SEL, 1);
-    ESP_LOGI(TAG, "USB 已切 host 模式");
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(PIN_USB_DEV_VBUS_EN, 1);         /* ④ host 口取电自 DEV 口 */
+
+    const gpio_config_t oc = { .pin_bit_mask = BIT64(GPIO_NUM_21),
+                               .mode = GPIO_MODE_INPUT,
+                               .pull_up_en = GPIO_PULLUP_ENABLE };
+    gpio_config(&oc);
+    ESP_LOGI(TAG, "USB 已切 host 模式，过流脚=%d (0=过流)", gpio_get_level(GPIO_NUM_21));
 }
 
-static void start_mdns(const uint8_t mac[6])
-{
-    char uuid[48];
-    /* 必须合法十六进制，且与 IPP 的 printer-uuid 完全一致 */
-    /* 换了 UUID 前缀：iOS 按 UUID 认打印机，改掉才能绕开它缓存里的旧记录 */
-    snprintf(uuid, sizeof uuid, "a7d41f60-9c2b-4e83-b1%02x-%02x%02x%02x%02x%02x%02x",
-             mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    esp_err_t err = mdns_init();
-    if (err != ESP_OK) { ESP_LOGE(TAG, "mdns_init: %s", esp_err_to_name(err)); return; }
-    mdns_hostname_set("hp136a-bridge");
-    mdns_instance_name_set("HP 136a Bridge");
-    mdns_txt_item_t txt[] = {
-        {"txtvers",  "1"},
-        {"qtotal",   "1"},
-        {"rp",       "ipp/print"},
-        {"ty",       "HP 136a Bridge"},
-        {"product",  "(HP Laser MFP 136a)"},
-        {"note",     "USB bridge"},
-        {"adminurl", "http://hp136a-bridge.local./"},
-        {"pdl",      "image/urf"},
-        {"URF",      "V1.4,W8,CP1,IS1,OB10,PQ4,RS300,DM1"},
-        {"Color",    "F"},
-        {"Duplex",   "F"},
-        {"usb_MFG",  "HP"},
-        {"usb_MDL",  "HP Laser MFP 136a"},
-        {"UUID",     uuid},
-        {"priority", "30"},
-        {"kind",     "document"},
-        {"PaperMax", "legal-A4"},
-        {"air",      "none"},
-    };
-    err = mdns_service_add("HP 136a Bridge", "_ipp", "_tcp", 631,
-                           txt, sizeof(txt)/sizeof(txt[0]));
-    if (err != ESP_OK) ESP_LOGE(TAG, "service_add: %s", esp_err_to_name(err));
-    err = mdns_service_subtype_add_for_host("HP 136a Bridge",
-                           "_ipp", "_tcp", NULL, "_universal");
-    if (err != ESP_OK) ESP_LOGE(TAG, "subtype_add: %s", esp_err_to_name(err));
-    ESP_LOGI(TAG, "mDNS 已广播 _ipp._tcp + _universal 子类型");
-}
 
 static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -144,6 +98,27 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
         lcd_ui_wifi(s_ip);
         xEventGroupSetBits(s_evt, EVT_GOT_IP);
     }
+}
+
+/* 网络就绪后起云端长连接。放独立任务里做：事件处理任务的栈只有 3.5KB，
+ * 在里面初始化 TLS 会爆栈。 */
+static void services_task(void *arg)
+{
+    xEventGroupWaitBits(s_evt, EVT_GOT_IP, pdFALSE, pdFALSE, portMAX_DELAY);
+    extern void netlog_start(void);
+    netlog_start();
+
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+
+    /* 本地不再跑 IPP 服务器和 mDNS——那套在这颗芯片上撑不住（mDNS 会被
+     * 高频请求饿死、并发连接吃光内存、持续射频负载拖垮供电）。
+     * 现在只保留一条向外的长连接，设备侧内存占用降一个数量级。 */
+    cloud_client_start(mac);
+
+    joblog_boot_report();
+    ESP_LOGI(TAG, "云端服务已启动，堆=%u", (unsigned)esp_get_free_heap_size());
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -202,7 +177,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
     ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_set_max_tx_power(52);
+    esp_wifi_set_max_tx_power(44);   /* 13dBm→11dBm，削掉射频电流尖峰 */
 
     /* 一次性诊断：把叫这个名字的所有 BSS 打出来 */
     wifi_scan_config_t sc = { .ssid = (uint8_t *)s_ssid };
