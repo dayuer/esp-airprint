@@ -10,7 +10,8 @@
     "test": "jest",
     "mock": "node mock-server/server.mjs",
     "urf:test": "shared/urf/run_tests.sh",
-    "urf:test:android": "shared/urf/run_tests_android.sh"
+    "urf:test:android": "shared/urf/run_tests_android.sh",
+    "portal": "node mock-server/portal.mjs 8888"
   },
   "dependencies": {
     "@react-native/new-app-screen": "0.87.1",

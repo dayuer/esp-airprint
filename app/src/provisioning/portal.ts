@@ -76,6 +76,8 @@ async function getJson<T>(path: string, opts: PortalOptions = {}): Promise<T> {
   try {
     res = await fetchImpl(`${base}${path}`, {signal: ctl.signal});
   } catch (e) {
+    // 注入的传输层（走配网热点那个）已经分好类了，别再包一层丢掉信息。
+    if (e instanceof PortalFailure) throw e;
     // AbortError 和「连不上」要分开：前者可能是路由走错了（走了蜂窝），
     // 后者多半是没连上热点或设备已重启。给用户的下一步不一样。
     const aborted = (e as {name?: string})?.name === 'AbortError';
@@ -156,6 +158,7 @@ export async function sendCredentials(
       signal: ctl.signal,
     });
   } catch (e) {
+    if (e instanceof PortalFailure) throw e;
     const aborted = (e as {name?: string})?.name === 'AbortError';
     throw new PortalFailure({kind: aborted ? 'timeout' : 'unreachable'});
   } finally {

@@ -1,4 +1,5 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useState} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
 import {ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ApiFailure, DeviceListItem, describeApiError, listDevices} from '../api';
@@ -78,7 +79,13 @@ function encoderVersionSafe(): string {
   }
 }
 
-export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}) {
+export function DeviceListScreen({
+  onOpen,
+  onAdd,
+}: {
+  onOpen: (d: DeviceListItem) => void;
+  onAdd: () => void;
+}) {
   const [encoderLine] = useState(encoderVersionSafe);
   const {c} = useTheme();
   const insets = useSafeAreaInsets();
@@ -97,9 +104,14 @@ export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}
     }
   }, [session]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // 用 useFocusEffect 而不是 useEffect：native-stack 不会卸载栈里的页面，
+  // 从配网向导 goBack() 回来时 useEffect 不会重跑——刚配好的设备就不会出现，
+  // 而用户明明看到向导说「配好了」。
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -139,7 +151,7 @@ export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}
               </Text>
               {!error && (
                 <Text style={[type.label, styles.emptyHint, {color: c.inkFaint}]}>
-                  给设备上电，连上它的 AirPrint-Setup 热点开始配网
+                  给设备上电，连上它的 StickBox-Setup 热点，然后点下面的「添加设备」
                 </Text>
               )}
             </View>
@@ -148,6 +160,7 @@ export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}
       />
 
       <View style={[styles.footer, {borderTopColor: c.rule, paddingBottom: insets.bottom + space.md}]}>
+        <Button title="添加设备" onPress={onAdd} />
         <Button title="退出登录" variant="quiet" onPress={() => session.getState().signOut()} />
         {/* 临时：原生光栅链路的可见凭证。阶段三做完就删。 */}
         <Text style={[type.label, styles.encoder, {color: c.inkFaint}]}>{encoderLine}</Text>
@@ -171,6 +184,11 @@ const styles = StyleSheet.create({
   emptyText: {textAlign: 'center'},
   emptyHint: {textAlign: 'center', marginTop: space.sm},
   // 浮起的操作条用一条线，不是阴影
-  footer: {borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: space.lg, paddingTop: space.md},
+  footer: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    gap: space.sm,
+  },
   encoder: {textAlign: 'center', marginTop: space.sm},
 });

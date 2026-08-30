@@ -11,6 +11,7 @@ import {CodeScreen} from '../screens/CodeScreen';
 import {DeviceDetailScreen} from '../screens/DeviceDetailScreen';
 import {DeviceListScreen} from '../screens/DeviceListScreen';
 import {PhoneScreen} from '../screens/PhoneScreen';
+import {ProvisionScreen} from '../screens/ProvisionScreen';
 import {useTheme} from '../ui/useTheme';
 import {API_BASE_URL} from '../config';
 
@@ -19,6 +20,7 @@ const store = createSessionStore({baseUrl: API_BASE_URL, store: keychainTokenSto
 export type AppStackParams = {
   DeviceList: undefined;
   DeviceDetail: {device: DeviceListItem};
+  Provision: undefined;
 };
 
 const Stack = createNativeStackNavigator<AppStackParams>();
@@ -39,8 +41,12 @@ function AppStack() {
         {({navigation}) => (
           <DeviceListScreen
             onOpen={device => navigation.navigate('DeviceDetail', {device})}
+            onAdd={() => navigation.navigate('Provision')}
           />
         )}
+      </Stack.Screen>
+      <Stack.Screen name="Provision" options={{title: '', headerBackTitle: '设备'}}>
+        {({navigation}) => <ProvisionScreen onDone={() => navigation.goBack()} />}
       </Stack.Screen>
       <Stack.Screen name="DeviceDetail" options={{title: '', headerBackTitle: '设备'}}>
         {({route, navigation}) => (
