@@ -62,8 +62,8 @@ export async function submitPrint(
   let res: Response;
   try {
     res = await f(req.url, {method: req.method, headers: req.headers, body: body as unknown as BodyInit_});
-  } catch {
-    throw new ApiFailure({kind: 'network'});
+  } catch (e) {
+    throw new ApiFailure({kind: 'network', cause: (e as Error)?.message});
   }
   const text = await res.text();
   let parsed: unknown;

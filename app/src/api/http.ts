@@ -74,9 +74,10 @@ export async function request<T>(cfg: ClientConfig, opts: RequestOptions): Promi
       }),
       body: hasBody ? JSON.stringify(opts.body) : undefined,
     });
-  } catch {
-    // 网络类异常不能让 TypeError 漏到 UI 层。
-    throw new ApiFailure({kind: 'network'});
+  } catch (e) {
+    // 网络类异常不能让 TypeError 漏到 UI 层，但要把原始报错带上——
+    // 「证书不被信任」和「端口被拦」不能都只显示一句「网络连不上」。
+    throw new ApiFailure({kind: 'network', cause: (e as Error)?.message});
   }
 
   const text = await res.text();

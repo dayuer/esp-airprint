@@ -13,7 +13,14 @@ export type ApiError =
   | {kind: 'unsupportedMedia'}                // 415
   | {kind: 'rateLimited'; detail: string}     // 429 detail 说明撞了哪道闸
   | {kind: 'server'; detail: string}          // 5xx 可重试
-  | {kind: 'network'};                        // 请求就没发出去
+  /**
+   * 请求就没发出去。
+   *
+   * `cause` 是底层的原始报错，**只用于排查**，不进用户文案。
+   * 少了它的话，线上只能看到一句「网络连不上」——而那句话对
+   * 「证书不被信任」「DNS 解析失败」「端口被拦」是同一个说法。
+   */
+  | {kind: 'network'; cause?: string};
 
 function detailOf(body: unknown): string {
   if (typeof body === 'object' && body !== null) {
@@ -77,6 +84,8 @@ export function describeApiError(err: ApiError): string {
     case 'server':
       return '服务端出错了，可以稍后重试';
     case 'network':
-      return '网络连不上，检查一下网络';
+      return __DEV__ && err.cause
+        ? `网络连不上：${err.cause}`
+        : '网络连不上，检查一下网络';
   }
 }
