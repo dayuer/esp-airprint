@@ -73,3 +73,10 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# C++ 编码器的构建产物
+shared/urf/build/
+shared/urf/build-android/
+
+# mock server 的落盘目录
+mock-server/.data/
