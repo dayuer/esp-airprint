@@ -68,6 +68,8 @@ ESP32-S3-USB-OTG 板子插在打印机 USB 口上，通过 MQTT 长连接挂在�
 删干净了会丢掉实测记录，留着又会误导接手的人。折中是**留着但标注**。清单如下，
 看到这些东西时不用再去考证它们还生不生效：
 
+#### 一、AirPrint 时代留下的
+
 | 残骸 | 现状 |
 |---|---|
 | `main/ipp_server.c` | 已删除，不在 `CMakeLists.txt` 里 |
@@ -78,6 +80,37 @@ ESP32-S3-USB-OTG 板子插在打印机 USB 口上，通过 MQTT 长连接挂在�
 
 `esp_http_server` 仍在 `CMakeLists.txt` 的 `REQUIRES` 里，**这个不是残骸**——
 配网门户 `provision.c` 还在用它。
+
+#### 二、服务端 Go 重写留下的
+
+服务端已用 Go 重写（`server/go/`，二进制 `stickboxd`），设计见
+`docs/superpowers/specs/2026-08-30-go-print-server-design.md`。
+**但它还没上线**——第 4 节描述的 Python 版仍是当前在跑的那套。
+
+| 东西 | 现状 |
+|---|---|
+| `server/bin/jobsrv.py` | **仍在生产运行**，不是残骸。切换到 Go 版之后才退役，且回滚要用它 |
+| `tools/reference/render.py`、`text2pdf.py` | 已从 `server/bin/` 移出并标注不再部署。**留档不是念旧**：`fix_page_count` 是 App 端 URF 编码器的参考实现，那个坑客户端一样会踩 |
+| `server/web/index.html` | 已删除。新版是纯 API，上传由 App 负责 |
+| `ppd/hp136a.ppd` | Go 版不读它——光栅搬到手机，服务端不再渲染。留作 `render-profile` 参数的人工核对依据 |
+| CUPS / `cupsfilter` / `fonts-noto-cjk` / `python3-gi` | Go 版不需要。**但先别卸载**——回滚到 Python 版要用，跑稳一个月再清 |
+
+#### 三、已经不是残骸的（清单里删掉了，写在这里免得有人再去考证）
+
+| 曾经的残骸 | 现在 |
+|---|---|
+| 仓库名 `esp-airprint` / 工程名 `airprint_bridge` | **已改名**：仓库 `dayuer/stickbox`，工程 `stickbox`，二进制 `stickboxd`。GitHub 自动重定向旧 URL，但**本地目录仍叫 `esp-airprint`** |
+| `main/portal_html.h` 里的「AirPrint 桥配网」字样 | 已改为「StickBox 配网」 |
+
+#### 四、即将变成残骸的
+
+`main/printer_profile.c` 里怪癖那一半（`uel_job_end` / `uel_wake` /
+`wake_delay_ms` / `iface_cycle` / `unidir`）——Go 版会通过
+`printer/{dev}/profile` 下发怪癖档案，那之后这张编译进固件的表**从「真相」
+降级为「连不上服务端时的兜底」**。
+
+服务端侧已经实现（`server/go/internal/profile`），**固件侧还没接**。
+接上之前，固件仍完全按这张表走。
 
 ---
 
@@ -307,6 +340,10 @@ PJL 作业包头和 UEL，内存管够，USB 栈完整。所以这类知识不�
 ---
 
 ## 4. 服务端
+
+⚠ **本节描述的是当前在跑的 Python 版。** Go 重写版（`server/go/`，二进制
+`stickboxd`）已实现但尚未上线，切换步骤见 `server/DEPLOY.md`。两者的差异
+（每设备密钥、服务端不渲染、内嵌 broker）见第 2 节残骸清单的第二部分。
 
 机器：`43.165.196.84`（印尼），域名 `mqtt.silkline.id`（Cloudflare 托管）。
 
