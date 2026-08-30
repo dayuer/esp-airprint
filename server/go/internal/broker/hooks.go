@@ -48,12 +48,12 @@ func (h *Hook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
 		slog.Warn("MQTT username 与密钥不符", "username", user, "key_dev", id.Dev)
 		return false
 	}
-	h.ids.put(cl.ID, id)
+	h.ids.put(cl, id)
 	return true
 }
 
 func (h *Hook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
-	id, ok := h.ids.get(cl.ID)
+	id, ok := h.ids.get(cl)
 	if !ok {
 		return false
 	}
@@ -61,7 +61,7 @@ func (h *Hook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 }
 
 func (h *Hook) OnDisconnect(cl *mqtt.Client, err error, expire bool) {
-	h.ids.drop(cl.ID)
+	h.ids.drop(cl)
 }
 
 func (h *Hook) OnPublished(cl *mqtt.Client, pk packets.Packet) {

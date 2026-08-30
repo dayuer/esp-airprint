@@ -18,29 +18,38 @@ import (
 	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
+// idTable 记住每条连接校验通过的身份，ACL 判定直接取，不重复跑 argon2。
+//
+// 键必须是**连接**而不是 client id。设备重连时 client id 不变，mochi 会做
+// 会话接管：旧连接的 OnDisconnect 在新连接建立之后才触发，用 client id 做键
+// 的话，那次清理会把新连接的身份一起删掉——此后这条连接的每次 ACL 检查都
+// 查不到身份、一律拒绝，设备连自己的状态都发不出去，断开重连成死循环。
+//
+// 这个 bug 在实机上现形过：服务端日志里是
+// `error="not authorized" TopicName:printer/{dev}/status`。
 type idTable struct {
 	mu sync.RWMutex
-	m  map[string]auth.Identity
+	m  map[*mqtt.Client]auth.Identity
 }
 
-func newIDTable() *idTable { return &idTable{m: map[string]auth.Identity{}} }
+func newIDTable() *idTable { return &idTable{m: map[*mqtt.Client]auth.Identity{}} }
 
-func (t *idTable) put(cid string, id auth.Identity) {
+func (t *idTable) put(cl *mqtt.Client, id auth.Identity) {
 	t.mu.Lock()
-	t.m[cid] = id
+	t.m[cl] = id
 	t.mu.Unlock()
 }
 
-func (t *idTable) get(cid string) (auth.Identity, bool) {
+func (t *idTable) get(cl *mqtt.Client) (auth.Identity, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	id, ok := t.m[cid]
+	id, ok := t.m[cl]
 	return id, ok
 }
 
-func (t *idTable) drop(cid string) {
+func (t *idTable) drop(cl *mqtt.Client) {
 	t.mu.Lock()
-	delete(t.m, cid)
+	delete(t.m, cl)
 	t.mu.Unlock()
 }
 

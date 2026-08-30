@@ -136,9 +136,17 @@ const prof_script_t *usb_printer_script(void){ return &s_script; }
  * 这样即使连不上云端，怪癖照样按编译进来的表生效。 */
 static void apply_builtin_script(void)
 {
-    prof_script_t sc;
-    profile_script_from_builtin(s_prof, &sc);
-    usb_printer_set_script(&sc);
+    /* prof_script_t 有 1.9KB，而 enum_task 的栈只有 4KB——放栈上直接爆栈重启。
+     * 这个坑只有在真板子上才现形：主机测试和编译器都不会提醒。 */
+    prof_script_t *sc = malloc(sizeof *sc);
+    if (!sc) {
+        ESP_LOGE(TAG, "分不到档案缓冲（%u 字节），保持当前档案",
+                 (unsigned)sizeof *sc);
+        return;
+    }
+    profile_script_from_builtin(s_prof, sc);
+    usb_printer_set_script(sc);
+    free(sc);
 }
 
 bool usb_printer_job_hooks(const char *json, size_t len)

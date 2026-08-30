@@ -615,49 +615,59 @@ static long jint(const char *s2, const char *key, long dflt)
  * 任何一步不过就整份丢弃、退回内置兜底——半份 profile 比没有 profile 更危险。 */
 static void apply_profile(const char *json, size_t len)
 {
-    prof_script_t sc;
+    /* 1.9KB 的结构体不能放栈上——MQTT 事件任务的栈没那么宽裕。
+     * 同样的错误让 enum_task 爆过栈，见 usb_printer.c 的 apply_builtin_script。 */
+    prof_script_t *sc = malloc(sizeof *sc);
+    if (!sc) { ESP_LOGE(TAG, "分不到档案缓冲，本次忽略"); return; }
     char err[128];
-    if (!profile_script_parse(json, len, &sc, err, sizeof err)) {
+    if (!profile_script_parse(json, len, sc, err, sizeof err)) {
         ESP_LOGW(TAG, "档案不合法，整份丢弃：%s", err);
+        free(sc);
         return;
     }
 
     /* serial 不符就整份忽略——profile 是 retain 消息，用户换了打印机之后
      * 旧档案会先到，套上去就是错的（规则 8）。 */
     const char *cur = usb_printer_serial();
-    if (sc.serial[0] && cur[0] && strcmp(sc.serial, cur)) {
-        ESP_LOGW(TAG, "档案是给 %s 的，当前插的是 %s——忽略", sc.serial, cur);
+    if (sc->serial[0] && cur[0] && strcmp(sc->serial, cur)) {
+        ESP_LOGW(TAG, "档案是给 %s 的，当前插的是 %s——忽略", sc->serial, cur);
+        free(sc);
         return;
     }
 
     profile_raw_save(json, len);
-    s_profile_rev = sc.rev;
-    s_n_skipped = sc.n_skipped;
-    for (int i = 0; i < sc.n_skipped && i < PROF_MAX_SKIPPED; i++)
-        snprintf(s_skipped[i], sizeof s_skipped[0], "%s", sc.skipped[i]);
-    if (sc.n_skipped)
+    s_profile_rev = sc->rev;
+    s_n_skipped = sc->n_skipped;
+    for (int i = 0; i < sc->n_skipped && i < PROF_MAX_SKIPPED; i++)
+        snprintf(s_skipped[i], sizeof s_skipped[0], "%s", sc->skipped[i]);
+    if (sc->n_skipped)
         ESP_LOGW(TAG, "档案里有 %u 个本固件不认识的原语，已跳过并上报",
-                 sc.n_skipped);
-    usb_printer_set_script(&sc);
+                 sc->n_skipped);
+    usb_printer_set_script(sc);
+    free(sc);
 }
 
 /* 开机时把上次那份读回来：设备可能在没有网络的情况下先插上打印机开印。 */
 void cloud_profile_restore(void)
 {
-    char buf[PROF_MAX_JSON + 1];
-    size_t n = profile_raw_load(buf, sizeof buf);
-    if (!n) return;
-    prof_script_t sc;
+    /* buf 1KB + 结构体 1.9KB 一起放栈上要 3KB，太冒险，一并搬到堆上。 */
+    char *buf = malloc(PROF_MAX_JSON + 1);
+    prof_script_t *sc = malloc(sizeof *sc);
+    if (!buf || !sc) { free(buf); free(sc); return; }
+    size_t n = profile_raw_load(buf, PROF_MAX_JSON + 1);
+    if (!n) { free(buf); free(sc); return; }
     char err[128];
-    if (!profile_script_parse(buf, n, &sc, err, sizeof err)) {
+    if (!profile_script_parse(buf, n, sc, err, sizeof err)) {
         /* 存档解析不了就清掉，免得每次开机都再失败一遍 */
         ESP_LOGW(TAG, "NVS 里的档案解析失败，已清除：%s", err);
         profile_raw_clear();
+        free(buf); free(sc);
         return;
     }
-    s_profile_rev = sc.rev;
-    ESP_LOGI(TAG, "从 NVS 恢复档案 src=%s rev=%d serial=%s", sc.src, sc.rev, sc.serial);
-    usb_printer_set_script(&sc);
+    s_profile_rev = sc->rev;
+    ESP_LOGI(TAG, "从 NVS 恢复档案 src=%s rev=%d serial=%s", sc->src, sc->rev, sc->serial);
+    usb_printer_set_script(sc);
+    free(buf); free(sc);
 }
 
 static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
