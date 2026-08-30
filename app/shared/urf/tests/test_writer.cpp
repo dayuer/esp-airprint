@@ -163,3 +163,104 @@ TEST(一页都没有就Close要抛) {
   } catch (const std::runtime_error&) { threw = true; }
   CHECK(threw);
 }
+
+TEST(默认关闭时每行都有独立的重复计数零) {
+  const std::string path = "/tmp/urf_norepeat.urf";
+  {
+    urf::Writer w(path);   // 默认关闭
+    w.BeginPage(SmallSpec(2, 3));
+    std::vector<uint8_t> band = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11};
+    w.WriteRows(band.data(), 3);
+    w.EndPage();
+    w.Close();
+  }
+  Bytes d = ReadFile(path);
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 12));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x00, 0x01, 0x11, 0x80});
+  CHECK_BYTES(Bytes(d.begin() + 48, d.begin() + 52), Bytes{0x00, 0x01, 0x11, 0x80});
+}
+
+TEST(打开后三行相同合并成一条) {
+  const std::string path = "/tmp/urf_repeat.urf";
+  {
+    urf::Writer w(path, /*line_repeat=*/true);
+    w.BeginPage(SmallSpec(2, 3));
+    std::vector<uint8_t> band = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11};
+    w.WriteRows(band.data(), 3);
+    w.EndPage();
+    w.Close();
+  }
+  Bytes d = ReadFile(path);
+  // 重复计数 2 表示「再重复 2 次」，共 3 行。
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 4));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x02, 0x01, 0x11, 0x80});
+}
+
+TEST(打开后不同的行不合并) {
+  const std::string path = "/tmp/urf_repeat_mixed.urf";
+  {
+    urf::Writer w(path, /*line_repeat=*/true);
+    w.BeginPage(SmallSpec(2, 3));
+    std::vector<uint8_t> band = {0x11, 0x11, 0x11, 0x11, 0x22, 0x22};
+    w.WriteRows(band.data(), 3);
+    w.EndPage();
+    w.Close();
+  }
+  Bytes d = ReadFile(path);
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 8));
+  CHECK_BYTES(Bytes(d.begin() + 44, d.begin() + 48), Bytes{0x01, 0x01, 0x11, 0x80});
+  CHECK_BYTES(Bytes(d.begin() + 48, d.begin() + 52), Bytes{0x00, 0x01, 0x22, 0x80});
+}
+
+TEST(重复计数上限256行后另起一条) {
+  const std::string path = "/tmp/urf_repeat_cap.urf";
+  {
+    urf::Writer w(path, /*line_repeat=*/true);
+    w.BeginPage(SmallSpec(2, 300));
+    std::vector<uint8_t> band(600, 0x33);
+    w.WriteRows(band.data(), 300);
+    w.EndPage();
+    w.Close();
+  }
+  Bytes d = ReadFile(path);
+  // 300 行 = 256 + 44，两条记录，每条 4 字节。
+  CHECK_EQ(d.size(), static_cast<size_t>(12 + 32 + 8));
+  CHECK_EQ(static_cast<int>(d[44]), 255);   // 再重复 255 次 = 256 行
+  CHECK_EQ(static_cast<int>(d[48]), 43);    // 再重复 43 次 = 44 行
+}
+
+// A4 600dpi 灰度整页是 4962x7014 = 34.8MB。这个测试按 400 行一带喂进去，
+// 全程不构造整页缓冲。它守的是「峰值内存与页面尺寸无关」这条设计主张：
+// 谁把 Writer 改成需要整页缓冲，这里就会因为内存暴涨而变慢或失败。
+TEST(A4整页按条带写入) {
+  const std::string path = "/tmp/urf_a4.urf";
+  const uint32_t kW = 4962, kH = 7014, kBand = 400;
+
+  std::vector<uint8_t> band(static_cast<size_t>(kW) * kBand);
+  {
+    urf::PageSpec s;
+    s.width_px = kW;
+    s.height_px = kH;
+    s.dpi = 600;
+
+    urf::Writer w(path);
+    w.BeginPage(s);
+    uint32_t done = 0;
+    while (done < kH) {
+      uint32_t rows = (kH - done < kBand) ? (kH - done) : kBand;
+      // 每带内容不同，避免编码器走上什么捷径。
+      for (size_t i = 0; i < static_cast<size_t>(kW) * rows; ++i)
+        band[i] = static_cast<uint8_t>((i + done) % 251);
+      w.WriteRows(band.data(), rows);
+      done += rows;
+    }
+    w.EndPage();
+    w.Close();
+  }
+
+  urf::ValidateResult r = urf::Validate(path);
+  CHECK(r.ok);
+  CHECK_EQ(r.declared_pages, 1u);
+  CHECK_EQ(r.width_px, kW);
+  CHECK_EQ(r.height_px, kH);
+}
