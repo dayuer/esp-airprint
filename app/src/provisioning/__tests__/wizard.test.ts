@@ -108,3 +108,51 @@ test('未登录时确认不会抛，只是回答不了', async () => {
   await expect(confirmProvisioned({baseUrl: cloud.baseUrl}, 'f412fa87c9e0'))
     .resolves.toBe(false);
 });
+
+test('密钥必须在重新连回热点之前申请到手', async () => {
+  // 顺序错了不会有编译错误，也不会在有蜂窝的手机上失败——只会在没 SIM、
+  // 没开数据、或者 Wi-Fi-only 的设备上调不通 enroll，而那时候用户看到的
+  // 只是一句「换密钥时连不上服务器」，完全指不到顺序上。
+  p = await startPortal({verifyMs: 50});
+  const order: string[] = [];
+
+  await completeProvisioning(
+    api,
+    {dev: '9988776655aa', ssid: '办公室 5G', pass: 'x', name: '顺序测试'},
+    {base: p.base, pollMs: 30, totalMs: 2000},
+    s => order.push(`stage:${s}`),
+    async () => {
+      order.push('rejoin');
+    },
+  );
+
+  expect(order).toEqual([
+    'stage:enrolling',   // 先换密钥——此时手机在自己的网络上
+    'stage:rejoining',
+    'rejoin',            // 再连回热点
+    'stage:sending',     // 然后才写凭据
+    'stage:waiting',
+  ]);
+});
+
+test('enroll 失败时根本不去连热点，也不会写任何凭据', async () => {
+  p = await startPortal();
+  let rejoined = false;
+  const badApi = {baseUrl: cloud.baseUrl};   // 没有 token
+
+  await expect(
+    completeProvisioning(
+      badApi,
+      {dev: '112233445566', ssid: 'x', pass: '', name: 'y'},
+      {base: p.base, pollMs: 30, totalMs: 500},
+      undefined,
+      async () => {
+        rejoined = true;
+      },
+    ),
+  ).rejects.toBeDefined();
+
+  expect(rejoined).toBe(false);
+  const {connectCalls} = await p.probe();
+  expect(connectCalls).toBe(0);
+});

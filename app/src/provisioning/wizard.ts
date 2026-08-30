@@ -3,16 +3,22 @@ import {ConnectOutcome, WaitOptions, provisionDevice} from './flow';
 import {PortalNetwork, PortalOptions, readDeviceId, scanNetworks} from './portal';
 
 /**
- * 配网编排。把三件事串起来，每一件都在不同的网络上：
+ * 配网编排。三件事，每一件在不同的网络上：
  *
- *   1. 读设备 ID、扫 Wi-Fi        —— 手机连在设备的配网热点上
- *   2. enroll 换设备密钥           —— **需要互联网**
- *   3. 写凭据、等结果              —— 又回到配网热点
+ *   1. 读设备 ID、扫 Wi-Fi   —— 连在配网热点上
+ *   2. enroll 换设备密钥      —— **必须回到能上网的网络**
+ *   3. 写凭据、等结果         —— 再连一次配网热点
  *
- * 第 2 步是个真实的麻烦：配网热点没有互联网。iOS 会把非本地流量走蜂窝，
- * Android 连上「无互联网」的 Wi-Fi 后通常也保留移动数据，所以多数情况能过，
- * 但手机没有蜂窝（只有 Wi-Fi 的 iPad、飞行模式）时就不行。
- * 这一层不掩盖它——enroll 失败时如实报「配网时手机需要能上网」。
+ * **顺序是被逼出来的，不是随便排的。**
+ *
+ * 手机同一时刻只能连一个 AP。连上配网热点就意味着断开原来的 Wi-Fi，
+ * 此时只剩蜂窝兜底——没有 SIM、没开数据、Wi-Fi-only 的平板，enroll 就调不通。
+ * 所以第 2 步必须在**离开热点之后**做，而不是趁着还连着顺手做掉。
+ *
+ * 代价是要连两次热点（两次系统确认框）。换来的是不依赖蜂窝。
+ *
+ * 而 enroll 又非得排在第 1 步之后不可：它要 dev，而 dev 只能从门户的
+ * /status 读到（SSID 后缀是 SoftAP MAC，跟 STA MAC 差 1，推不出来）。
  */
 
 export interface PortalInfo {
@@ -44,22 +50,32 @@ export interface ProvisionResult {
   reset: boolean;
 }
 
-export type ProvisionStage = 'enrolling' | 'sending' | 'waiting';
+export type ProvisionStage = 'enrolling' | 'rejoining' | 'sending' | 'waiting';
 
 /**
- * 第二步：换密钥、写进设备、等它连上。
+ * 第二步：换密钥 →（回到热点）→ 写进设备 → 等它连上。
  *
- * enroll 放在写凭据之前：密钥要和 Wi-Fi 凭据一起写进去，一次搞定。
- * 分两次写的话，设备会先用空密钥重启一轮，那是白等 30 秒。
+ * `rejoin` 在 enroll 之后、写凭据之前调用，用来重新加入配网热点。
+ * 调用方在读完门户信息后就应该已经离开热点了——那样 enroll 才走得通。
+ * 不传 rejoin 就是「一直连着热点」的模式，只在测试里用（假门户在局域网上）。
+ *
+ * 密钥和 Wi-Fi 凭据一次写进去：分两次写的话设备会先用空密钥重启一轮，
+ * 白等 30 秒还多一次失败。
  */
 export async function completeProvisioning(
   api: ClientConfig,
   input: ProvisionInput,
   opts: WaitOptions = {},
   onStage?: (s: ProvisionStage) => void,
+  rejoin?: () => Promise<unknown>,
 ): Promise<ProvisionResult> {
   onStage?.('enrolling');
   const enrolled = await enrollDevice(api, input.dev, input.name);
+
+  if (rejoin) {
+    onStage?.('rejoining');
+    await rejoin();
+  }
 
   onStage?.('sending');
   onStage?.('waiting');
