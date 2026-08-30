@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/raster"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/raster"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 const maxJobBytes = 200 << 20 // URF 是光栅，整页照片单页就能到 15MB

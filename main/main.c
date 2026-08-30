@@ -1,6 +1,9 @@
 /*
- * ESP32 AirPrint 桥：Wi-Fi station + mDNS(_ipp._tcp,_universal) + IPP 服务器
- *                    + USB host 打印机透传。文档流不落地、不渲染。
+ * ESP32 云打印桥：Wi-Fi station + 云端 MQTT 长连接 + USB host 打印机透传。
+ * 文档流不落地、不渲染。
+ *
+ * 注意：本地 IPP 服务器 + mDNS 那一版已经废弃（见 docs/HANDOFF-cloud-print.md
+ * 第 2 节）。设备现在不监听任何端口，只有一条出站长连接。
  */
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -16,11 +19,8 @@
 #include "cloud_client.h"
 #include "joblog.h"
 #include "provision.h"
-#include "usb_printer.h"
-#include "cloud_client.h"
-#include "joblog.h"
+#include "printer_profile.h"
 #include "lcd_ui.h"
-#include "driver/gpio.h"
 #include "esp_system.h"
 
 static const char *TAG = "bridge";
@@ -111,6 +111,10 @@ static void services_task(void *arg)
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
 
+    /* 恢复上次服务端下发的 USB 层怪癖档案。放在起云端之前——
+     * 打印机枚举可能比 profile 消息先到，先有个正确的起点。 */
+    profile_override_restore();
+
     /* 本地不再跑 IPP 服务器和 mDNS——那套在这颗芯片上撑不住（mDNS 会被
      * 高频请求饿死、并发连接吃光内存、持续射频负载拖垮供电）。
      * 现在只保留一条向外的长连接，设备侧内存占用降一个数量级。 */
@@ -123,7 +127,7 @@ static void services_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== ESP32 AirPrint 桥 ===");
+    ESP_LOGI(TAG, "=== ESP32 云打印桥 ===");
     ESP_LOGI(TAG, "堆@启动=%u", (unsigned)esp_get_free_heap_size());
     lcd_ui_init();
     ESP_LOGI(TAG, "堆@LCD后=%u", (unsigned)esp_get_free_heap_size());

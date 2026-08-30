@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/profile"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/profile"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // identDoc 是设备上报的机型档案里我们关心的那部分。

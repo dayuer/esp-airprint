@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 func newMem(t *testing.T) (*Membership, *store.Store, *time.Time) {

@@ -15,7 +15,7 @@ import (
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/listeners"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
 type idTable struct {

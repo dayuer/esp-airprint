@@ -3,7 +3,7 @@ package auth
 import (
 	"testing"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 func newStore(t *testing.T) *store.Store {

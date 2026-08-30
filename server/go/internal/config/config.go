@@ -64,7 +64,7 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("config: phone_pepper 和 phone_key 必填")
 	}
 	if c.Root == "" {
-		c.Root = "/opt/airprint"
+		c.Root = "/opt/stickbox"
 	}
 	if c.HTTPAddr == "" {
 		c.HTTPAddr = ":9443"

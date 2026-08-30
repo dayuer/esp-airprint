@@ -8,8 +8,8 @@ import (
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/device"
 )
 
 // Router 是 broker 对 registry 的窄依赖。
@@ -26,7 +26,7 @@ type Hook struct {
 	ids *idTable
 }
 
-func (h *Hook) ID() string { return "airprint-auth" }
+func (h *Hook) ID() string { return "stickbox-auth" }
 
 func (h *Hook) Provides(b byte) bool {
 	switch b {

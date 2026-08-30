@@ -9,17 +9,18 @@
 刻意不把文档塞进 MQTT：一份作业 100~500KB，而设备可用堆只有几十 KB，
 MQTT 消息必须整包进内存，塞不下。
 """
-import os, json, uuid, subprocess, threading, time, sqlite3
+import os, re, json, uuid, subprocess, threading, time, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import paho.mqtt.client as mqtt
 
-ROOT     = '/opt/airprint'
+ROOT     = '/opt/stickbox'
 JOBS     = f'{ROOT}/jobs'
+IDENTS   = f'{ROOT}/idents'             # 设备上报的机型档案，兼容性库的原料
 DB       = f'{ROOT}/jobs.db'
 RENDER   = f'{ROOT}/bin/render.py'
 LISTEN   = ('0.0.0.0', 9443)            # 直接 TLS 对外（443/8443 被 xray 占用）
 # 口令从 config.json 读（不入库），照 config.example.json 填。
-CONF = json.load(open(os.environ.get('AIRPRINT_CONF', f'{ROOT}/config.json')))
+CONF = json.load(open(os.environ.get('STICKBOX_CONF', f'{ROOT}/config.json')))
 MQTT_HOST, MQTT_PORT = CONF.get('mqtt_host', '127.0.0.1'), CONF.get('mqtt_port', 1883)
 MQTT_USER, MQTT_PASS = CONF['mqtt_user'], CONF['mqtt_pass']
 CERT_DIR = CONF.get('cert_dir', '/etc/letsencrypt/live/mqtt.silkline.id')
@@ -172,7 +173,49 @@ class H(BaseHTTPRequestHandler):
         return self._send(404, b'{"e":"not found"}')
 
     def do_POST(self):
-        if self.path.split('?')[0] != '/api/print':
+        p = self.path.split('?')[0]
+
+        # 设备上报机型档案。设备每次插上打印机报一次，几 KB 到十几 KB。
+        # 每台设备留一份 latest.json，另外按时间戳存历史——机型档案会随
+        # 固件探针的改进而变化，覆盖掉就没法比对了。
+        m = re.match(r'^/api/device/([0-9a-f]{6,32})/ident$', p)
+        if m:
+            dev = m.group(1)
+            n = int(self.headers.get('Content-Length', 0))
+            if n <= 0 or n > 256 * 1024:
+                return self._send(400, b'{"e":"bad size"}')
+            raw = self.rfile.read(n)
+            try:
+                obj = json.loads(raw)
+            except Exception as e:
+                print(f'[ident] {dev} JSON 非法: {e}', flush=True)
+                return self._send(400, b'{"e":"bad json"}')
+            obj['_dev'] = dev
+            obj['_ts'] = int(time.time())
+            d = f'{IDENTS}/{dev}'
+            os.makedirs(d, exist_ok=True)
+
+            # 设备内存只够开一条额外 TLS，握着大缓冲做 HTTPS 会在证书验签
+            # 那一步分不到内存。所以档案是分两趟小载荷传上来的：
+            # 第 0 层（USB 描述符）整份替换，带 _part 的（PJL 探针）合并进去。
+            part = obj.pop('_part', None)
+            latest = f'{d}/latest.json'
+            if part and os.path.exists(latest):
+                try:
+                    base = json.load(open(latest))
+                except Exception:
+                    base = {}
+                base.update(obj)
+                obj = base
+            body = json.dumps(obj, ensure_ascii=False, indent=1).encode()
+            open(f'{d}/{obj["_ts"]}.json', 'wb').write(body)
+            open(latest, 'wb').write(body)
+            mdl = (obj.get('printer_class') or {}).get('model', '?')
+            print(f'[ident] {dev} 机型档案 {n} 字节 part={part or "base"} '
+                  f'型号={mdl}', flush=True)
+            return self._send(200, b'{"ok":1}')
+
+        if p != '/api/print':
             return self._send(404, b'{"e":"not found"}')
         n = int(self.headers.get('Content-Length', 0))
         if n <= 0 or n > 50 * 1024 * 1024:
@@ -215,6 +258,7 @@ class H(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     import ssl
     os.makedirs(JOBS, exist_ok=True)
+    os.makedirs(IDENTS, exist_ok=True)
     srv = ThreadingHTTPServer(LISTEN, H)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(f'{CERT_DIR}/fullchain.pem', f'{CERT_DIR}/privkey.pem')

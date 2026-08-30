@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Publisher 是 actor 对 MQTT 的窄依赖。

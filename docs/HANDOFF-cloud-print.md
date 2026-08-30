@@ -28,8 +28,21 @@ ESP32-S3-USB-OTG 板子插在打印机 USB 口上，通过 MQTT 长连接挂在�
 **为什么文档不走 MQTT**：MQTT 消息必须整包进内存才能交给应用，而设备可用堆只有
 70~120KB，一份作业 100~500KB，塞不下。HTTPS 流式拉取自带 TCP 反压，设备内存恒定。
 
-**为什么 ESP32 不认识格式**：格式差异全部收敛在服务端的 `printer_profile` 里。今天这台
-激光机说 URF + PJL；换成热敏小票机就是 ESC/POS。设备侧代码一行不用改。
+**为什么 ESP32 不认识格式**：格式差异收敛在服务端。渲染由 `bin/render.py` 调
+`cupsfilter -P <PPD> -m image/urf` 完成，**机型知识存在那份 CUPS PPD 里**
+（当前是 `/opt/stickbox/ppd/hp136a.ppd`），不在代码里。换机型 = 换 PPD。
+
+别和固件里的 `main/printer_profile.c` 搞混，两者管的不是一回事：
+
+| | 在哪 | 管什么 | 换机型要改吗 |
+|---|---|---|---|
+| CUPS PPD | 服务端 `/opt/stickbox/ppd/` | 文档怎么渲染成光栅 | **是** |
+| `printer_profile.c` | 固件 | USB 层怎么伺候：UEL、唤醒、接口复位、单双向 | 是（只有怪癖字段生效） |
+
+`printer_profile.c` 里的身份/能力字段（`make_and_model` / `urf` / `media_*` /
+`resolution` …）是本地 IPP 时代用来拼属性应答的，**现在没有任何代码读它们**，
+改了不会有任何效果。保留是当实测记录。真正生效的是怪癖那一半：`uel_job_end`、
+`uel_wake`、`wake_delay_ms`、`iface_cycle`、`unidir`（`cups_quirks` 只作上报）。
 
 ---
 
@@ -49,6 +62,22 @@ ESP32-S3-USB-OTG 板子插在打印机 USB 口上，通过 MQTT 长连接挂在�
 
 云方案把这三个问题一次性消掉：设备只有一条出站长连接，没有服务端口，没有 mDNS，
 没有并发连接。今天实测空闲堆稳定在 72~120KB。
+
+### 这次转向留下了什么残骸
+
+删干净了会丢掉实测记录，留着又会误导接手的人。折中是**留着但标注**。清单如下，
+看到这些东西时不用再去考证它们还生不生效：
+
+| 残骸 | 现状 |
+|---|---|
+| `main/ipp_server.c` | 已删除，不在 `CMakeLists.txt` 里 |
+| `tools/devtest.py` | **跑不通**，对着 631 端口讲 IPP。留档，文件头已标注 |
+| `printer_profile_t` 的身份/能力字段 | 无人读取，改了没效果。留作实测记录 |
+| `sdkconfig.defaults` 的 `CONFIG_MDNS_*` | 已删除——mDNS 组件已不编译，那两行是空配置 |
+| `CONFIG_LWIP_TCP_WND_DEFAULT=2880` | **前提已失效**：当年是为省内存给 iOS 并发连接，现在只剩一条下载连接，这个值可能反而在限速。待验证，见第 8 节 |
+
+`esp_http_server` 仍在 `CMakeLists.txt` 的 `REQUIRES` 里，**这个不是残骸**——
+配网门户 `provision.c` 还在用它。
 
 ---
 
@@ -121,22 +150,180 @@ gpio_set_level(PIN_USB_DEV_VBUS_EN, 1);  /* ④ */
 
 ---
 
+## 3.6 机型识别：设备侧现在能自己读到什么
+
+枚举时按风险分层探测，**层级不能乱**——探错的代价是打印机把探针当正文打出来，
+用户开箱第一件事是收到一张乱码纸。
+
+**第 0 层：零风险，只走控制传输，不碰打印通道。无条件执行。**
+
+| 读什么 | 怎么读 |
+|---|---|
+| VID / PID / 厂商 / 型号串 | 设备描述符 |
+| 接口 7/1/x、protocol（1=单向 2=双向 3=1284.4）、端点、MPS | 配置描述符 |
+| **IEEE-1284 设备 ID** | `GET_DEVICE_ID`（类请求 `0xA1` / `bRequest=0`） |
+| 缺纸 / 选中 / 出错 | `GET_PORT_STATUS`（`0xA1` / `bRequest=1`） |
+
+`GET_DEVICE_ID` 是整条兼容性链路的地基，两个坑：
+
+- 头两字节是**大端**长度，且**含这两字节自身**
+- `wIndex` 是 `(接口号<<8) | alt`，**不是**接口号本身——写错直接 STALL
+
+拿到的 `CMD:` 字段决定第 1 层能不能做。
+
+**第 1 层：条件性。必须由第 0 层的 `CMD:` 授权。**
+
+`CMD:` 里出现 PJL 或 PCL 才发 PJL（`@PJL INFO ID / CONFIG / SUPPLIES …`）。
+代码里这个判断在 `enum_task()`，盲发已经堵死。ESC/POS 那类机器要另一套探针，
+目前没有。
+
+**第 2 层：必须出纸才测得出来的。无法自动化。**
+
+UEL 到底需不需要、唤醒延时够不够、页边距对不对。尤其 UEL——它的症状是
+「第二份不出」，所以**单份作业成功不能说明任何事，必须连打两份**。
+
+### 按需探针 `usb_printer_probe()`
+
+以前 PJL 探针会把整机搞成重启循环，原因不是 PJL 本身：
+
+`usb_printer_job_write()` 用的是**全局唯一**的 `s_xfer` + `s_xfer_done`，而它
+**自己不持 `s_job_mutex`**（锁由 `job_begin` 拿、`job_end` 放）。老的 `pjl_send()`
+绕过作业流程直接调 `job_write`，于是探针和正在传的作业同时操作同一个
+`usb_transfer_t`——对还在飞的 transfer 二次 submit，ESP-IDF 直接 assert。
+重启后 MQTT 重投那份作业，再撞一次，就成了循环。
+
+现在拆成三层，探针可以随时调：
+
+- `pjl_send_locked()` —— 裸发，调用者必须已持锁
+- `pjl_send_safe()` —— 自己抢锁，抢不到就放弃（探针优先级低于作业）
+- `usb_printer_probe()` —— 持锁 + 收回包；**回包由现役的 `status_reader_task`
+  顺带抄给它，不另起读 IN 端点的任务**（两个任务在同一 IN 端点上 submit
+  是另一条 panic 路径）
+
+云端下发 `printer/{dev}/cmd` → `{"probe":"@PJL INFO ID"}` 即可触发，
+结果回到 `printer/{dev}/status`。
+
+**捕获缓冲按调用方给的 `cap` 动态分配**——`INFO VARIABLES` 有好几 KB，
+固定大小要么不够要么白占 RAM。想拿大回包就传个大的 `out`。
+
+#### 修掉的三处静默截断（这三条以前让探针数据不可信）
+
+1. **每包截到 128 字节**。`status_reader_task` 用 `char txt[129]`，而一次 bulk IN
+   实际读 **512** 字节。`INFO CONFIG` / `VARIABLES` 的回包被切掉且**不报错**——
+   看起来像是打印机就回了这么多。现在按 `IN_READ_MAX` 全量处理，日志仍只显示
+   前 128 字节避免刷屏。
+2. **换行被吃掉**。以前所有非可打印字符一律换成 `.`，包括 `\r\n`。PJL 回包是
+   按行的 `key=value`，吃掉换行就没法解析。现在捕获走原始字节，`\r \n \t` 保留。
+3. **探针缓冲固定 512 字节**。见上，改成动态。
+
+顺带把 `status_reader_task` 的栈从 4096 提到 6144——`txt[IN_READ_MAX+1]` 是栈上的。
+
+### 插上打印机时的全量采集
+
+`usb_printer_describe()` 出第 0 层 JSON，`ident_task`（cloud_client.c）串起全流程：
+
+```
+打印机枚举完成 → watch_task 发信号 → ident_task 等 3 秒让打印机稳定
+  → 第 0 层 describe()（控制传输，零风险）
+  → 第 1 层 PJL 探针 ×7（仅当 usb_printer_pjl_allowed()）
+  → HTTPS POST  /api/device/{dev}/ident
+  → MQTT publish printer/{dev}/ident（精简身份，retain=1）
+```
+
+**为什么全量走 HTTPS 而不是 MQTT**：全量 4~16KB，而信令通道的原则是「只传
+几十字节」（第 1 节）。一份十几 KB 的 retain 消息会让每个订阅者一连上就吃一大口。
+MQTT 上只留几百字节的精简身份。
+
+第 1 层的探针清单在 `PJL_PROBES[]`。顺序是**先便宜先成功**，`INFO VARIABLES`
+放最后——它最大也最可能超时。缓冲剩余不足 512 字节时主动跳过剩余探针并打日志，
+**不静默截断**。
+
+服务端落点：`/api/device/{dev}/ident`（`jobsrv.py`），每台设备存
+`/opt/stickbox/idents/{dev}/latest.json` 加按时间戳的历史——机型档案会随探针改进
+而变化，覆盖掉就没法比对了。
+
+#### 序列号是主键，不是 MAC
+
+`usb_device_info_t.str_desc_serial_num` 是**每台打印机唯一**的。设备 MAC 标识的是
+桥，不是打印机。要做机型库，区分「同一个桥换了打印机」和「同一台打印机换了桥」
+只能靠它。
+
+### ⚠ 曾经有个静默失效：`s_prof` 从未被赋值
+
+`profile_lookup()` 写好了却一次都没被调用，`s_prof` 恒为 NULL。后果是
+`s_prof && s_prof->uel_wake` 和 `s_prof && s_prof->iface_cycle` 恒假——
+**休眠唤醒和作业间接口重置这两条实测怪癖，实际上一直没生效**。
+UEL 侥幸活着，因为那行写的是 `(!s_prof || s_prof->uel_job_end)`。
+
+已在 `enum_task()` 里接上。**这意味着连打行为发生了变化，换机器后要重测连打。**
+
+---
+
+## 3.7 兼容性数据来源：CUPS usb-quirks
+
+`main/usb_quirks_db.h` 是**自动生成**的，别手改。重新生成：
+
+```bash
+curl -sL https://raw.githubusercontent.com/OpenPrinting/cups/master/backend/org.cups.usb-quirks -o /tmp/q.txt
+python3 tools/gen_usb_quirks.py /tmp/q.txt main/usb_quirks_db.h
+```
+
+来源是 OpenPrinting CUPS 的 `backend/org.cups.usb-quirks`，**Apache License 2.0**，
+可直接使用，保留出处即可。（foomatic-db 多为 GPL，要用之前先确认许可证。）
+
+原表 122 条，导入 96 条。丢弃的两类：
+
+- `no-reattach`（30 条）—— Linux usblp 内核模块专用，ESP32 上没有这个概念
+- `whitelist` —— 只是「确认可用」的注记，不产生任何行为
+
+导入的位里，真正会改写行为的只有三条，且**仅在没有手写档案时生效**——手写档案
+是实测出来的，优先级高于第三方表：
+
+| 位 | 行为 |
+|---|---|
+| `QK_UNIDIR` | 停用 IN 端点、不发 PJL。对单向机器读 IN 会一直超时，严重时拖垮 host 栈 |
+| `QK_SOFT_RESET` | 打印后做 SOFT_RESET |
+| `QK_DELAY_CLOSE` | 释放接口前留延时（映射到 `iface_cycle`） |
+
+`QK_BLACKLIST` / `QK_USB_INIT` / `QK_VENDOR_CLASS` 只打警告不改行为。其中
+`QK_VENDOR_CLASS` 值得注意：`find_endpoints()` 只认 `bInterfaceClass == 0x07`，
+厂商私有 class 的机器会被判成「不是可用打印机」——这条日志就是排查线索。
+
+### 别高估这张表
+
+**它是冷启动的起点，不是兼容性库。**
+
+- 96 条里 59 条是佳能（`0x04a9`），高度偏向老喷墨
+- 你手上这台 HP Laser MFP 136a（`0x03F0:0xF22A`）**不在表里**
+- 真正让本项目吃苦头的那些怪癖——作业结束符要不要发、唤醒等多久、
+  URF 能不能断流——CUPS 里**一条都没有**
+
+最后一点值得记住原因：**在 Linux 上这些问题不发生。** CUPS 的过滤链自己会吐
+PJL 作业包头和 UEL，内存管够，USB 栈完整。所以这类知识不存在于任何公开数据库，
+不是因为它稀有，而是因为只有在我们这种约束下它才显形。
+
+反过来说，这也意味着它**不构成对跑 Linux 的竞品的壁垒**——对方根本遇不到。
+
+---
+
 ## 4. 服务端
 
 机器：`43.165.196.84`（印尼），域名 `mqtt.silkline.id`（Cloudflare 托管）。
 
 ```
-/opt/airprint/
+/opt/stickbox/
   bin/jobsrv.py      作业服务：收文件 / 渲染 / 排队 / 派发 / TLS 9443
   bin/render.py      PDF、图片、文本 → URF
   bin/text2pdf.py    文本 → PDF（PangoCairo）
+  ppd/hp136a.ppd     机型 PPD——渲染的机型知识全在这里，换打印机就换它
+  idents/{dev}/      设备上报的机型档案：latest.json + 按时间戳的历史
   web/index.html     上传页
   config.json        口令与证书路径（600，不入库）
   jobs/              渲染产物 <jid>.urf
   jobs.db            sqlite 作业表
 ```
 
-- 服务单元 `airprint-job.service`，`Requires=mosquitto.service`
+- 服务单元 `stickbox-job.service`，`Requires=mosquitto.service`
 - 端口 **9443**（不是 443/8443——那两个被现有的 xray 占着）
 - MQTT：`8883` 对外 TLS，`1883` 仅 `127.0.0.1` 给服务端自己用；`allow_anonymous false`
 
@@ -198,7 +385,9 @@ main/
   main.c            引导、Wi-Fi、USB 电源时序、任务编排
   cloud_client.c    MQTT 信令 + HTTPS 流式取件 + 心跳
   usb_printer.c     USB Host 打印机驱动（本项目核心资产）
-  printer_profile.c 每型号一份配置：纸张、分辨率、作业结束符、唤醒策略
+  printer_profile.c 每型号一份 USB 层怪癖配置（作业结束符、唤醒、接口复位）
+                    ——身份/能力字段是 IPP 时代遗留，已无人读，见第 1 节
+  usb_quirks_db.h   CUPS usb-quirks 导入表，自动生成勿手改，见第 3.7 节
   provision.c       首次配网（SoftAP + 强制门户）
   joblog.c          作业各阶段落 NVS，用于复位后倒查
   lcd_ui.c          LCD 显示
@@ -210,7 +399,7 @@ main/
 
 ```bash
 source ~/esp/esp-idf-v5.5/export.sh
-cd ~/sproot/esp-airprint
+cd ~/sproot/stickbox
 cp main/cloud_creds.h.example main/cloud_creds.h   # 首次，填自己的
 idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash
@@ -238,6 +427,9 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 
 | 症状 | 先查什么 |
 |---|---|
+| 机型档案没上来 | 服务端 `journalctl -u stickbox-job -f` 看有没有 `[ident]`；设备日志看「机型档案已上传 HTTP 200」 |
+| 第 1 层探针全空 | `usb_printer_pjl_allowed()` 是否为真——`CMD:` 里没 PJL/PCL 就不发，这是有意的 |
+| 探针回包明显不全 | 看是不是又有人把收包缓冲改小了，见第 3.6 节那三处截断 |
 | 页面显示「等打印桥上线」 | `/api/status` 里 `seen` 多久前；超 120 秒判离线 |
 | 只能打第一份，第二份要按取消键 | UEL 没发出去，看日志有无「已发送 UEL 作业结束符」 |
 | 距流尾几 KB 处 Decoding Fail | 作业收尾时碰了端点 |
@@ -246,8 +438,8 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | `idf.py flash` 打不开串口 | 按 BOOT+RST 进下载模式 |
 | 打印机枚举不到 | 查 USB 电源时序，尤其 `LIMIT_EN` 是不是被置 0 了 |
 
-设备日志：板子通过 UDP 5514 广播，`nc -ul 5514`。
-服务端日志：`journalctl -u airprint-job -f`。
+设备日志：板子通过 UDP 5140 广播，`nc -ul 5140`。
+服务端日志：`journalctl -u stickbox-job -f`。
 复位后倒查上一份作业卡在哪个阶段：`joblog_boot_report()` 开机时打印。
 
 ---
@@ -259,6 +451,12 @@ idf.py -p /dev/cu.usbmodemXXXX flash
   只有 `INFO ID` 有效。这台机器大概率不支持，需要换 SNMP / Printer MIB（RFC 3805）验证。
 - 状态从 `Printing` 退回基础态实测约 88 秒才发生，比设计的 20 秒慢，原因未查。
 - 只有一台设备在跑，多设备路由没验证过。
+- **取件速度没量过**。`CONFIG_LWIP_TCP_WND_DEFAULT=2880` 是本地 IPP 时代为省内存
+  定的，云架构下只剩一条 HTTPS 下载连接，这个窗口很可能是当前的吞吐瓶颈。
+  先量一份 500KB 作业的端到端耗时，再试 5760 / 11520，对比空闲堆。
+- **设备凭据是全局共用的一组**。`cloud_creds.h` 里的 MQTT 账号密码所有设备相同，
+  主题只按 MAC 分。拆一台机器就能订阅所有人的作业主题。自己用无所谓，
+  一旦发给第二个人用，这是必须先换成一机一凭证的阻塞项。
 
 **下一步（如果要往「社交打印」方向走）**
 最缺的不是硬件，是**身份**。现在系统里只有设备 MAC，没有 User ID、没有关系链。

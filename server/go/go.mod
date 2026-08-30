@@ -1,4 +1,4 @@
-module github.com/dayuer/esp-airprint/server/go
+module github.com/dayuer/stickbox/server/go
 
 go 1.26
 

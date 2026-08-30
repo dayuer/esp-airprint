@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Sender 是短信服务商的抽象。测试用假实现——单测和集成测试绝不真发短信。

@@ -24,14 +24,14 @@ import (
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/broker"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/httpapi"
-	"github.com/dayuer/esp-airprint/server/go/internal/registry"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
-	"github.com/dayuer/esp-airprint/server/go/internal/tlsx"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/broker"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/httpapi"
+	"github.com/dayuer/stickbox/server/go/internal/registry"
+	"github.com/dayuer/stickbox/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/tlsx"
 )
 
 type fakeSender struct{ last string }

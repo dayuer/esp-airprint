@@ -2,7 +2,7 @@
 
 面向：固件开发（ESP32 侧）、App 开发（上传侧）。
 
-对应服务端：`airprintd`（Go 重写版，设计见
+对应服务端：`stickboxd`（Go 重写版，设计见
 `docs/superpowers/specs/2026-08-30-go-print-server-design.md`）。
 
 **与 v1（`jobsrv.py`）不兼容**，差异清单在第 8 节。固件按本文实现即可，
@@ -1029,7 +1029,7 @@ DEV=f412fa87c9e0
 ⚠ **与 `sms` 同时配置会拒绝启动**——真接了短信服务商就说明是生产环境，
 此时还留着固定号码是配置事故。
 
-没配固定号码时，开发环境的验证码只打日志，从 `journalctl -u airprintd` 里取。
+没配固定号码时，开发环境的验证码只打日志，从 `journalctl -u stickboxd` 里取。
 
 ```bash
 curl -s -X POST https://$HOST:9443/api/auth/sms -H 'Content-Type: application/json' -d '{"phone":"13800008888"}'
@@ -1110,7 +1110,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$HOST:9443/api/print -H
 
 ## 8. 相对 v1 的差异（固件改动清单）
 
-| # | 项 | v1（`jobsrv.py`） | v2（`airprintd`） | 固件改动 |
+| # | 项 | v1（`jobsrv.py`） | v2（`stickboxd`） | 固件改动 |
 |---|---|---|---|---|
 | 1 | MQTT 认证 | 全网共用 `MQTT_USER`/`MQTT_PASS` 常量 | 每设备一密钥，username=`{dev}` | `cloud_creds.h` 的两个常量 → 从 NVS 读 `cloud/devkey` |
 | 1b | 密钥怎么进设备 | 服务器上签发，用户**手抄** 45 个字符 | App 登录后 enroll，连同 Wi-Fi 凭据一起写进设备 | 配网协议要能接收 `devkey` 字段 |

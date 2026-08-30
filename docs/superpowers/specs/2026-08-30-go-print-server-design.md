@@ -4,8 +4,8 @@
 状态：已评审，待实现
 
 把 `server/bin/jobsrv.py`（265 行 Python：MQTT 客户端 + TLS HTTP + sqlite 队列）
-重写为单个 Go 二进制 `airprintd`，内嵌 MQTT broker，取代
-`airprint-job.service` + `mosquitto.service` 两个单元。
+重写为单个 Go 二进制 `stickboxd`，内嵌 MQTT broker，取代
+`stickbox-job.service` + `mosquitto.service` 两个单元。
 
 本文只写设计决策和它们的理由。已被否决的方案写在第 11 节，是为了让接手的人
 不要再走一遍。
@@ -66,7 +66,7 @@ Postgres 让多实例共享状态。
 
 ## 3. 进程与监听
 
-单二进制 `airprintd`：
+单二进制 `stickboxd`：
 
 - `:8883` MQTT over TLS（内嵌 [mochi-mqtt](https://github.com/mochi-mqtt/server) v2）
 - `:9443` HTTPS（纯 JSON API）
@@ -89,7 +89,7 @@ Postgres 让多实例共享状态。
 
 ```
 server/go/
-  cmd/airprintd/main.go     启动装配、优雅退出、device 子命令
+  cmd/stickboxd/main.go     启动装配、优雅退出、device 子命令
   internal/config/          config.json
   internal/tlsx/            证书热重载
   internal/store/           sqlite：jobs / devices 表（modernc.org/sqlite，纯 Go 无 cgo）
@@ -233,7 +233,7 @@ ACL 判定多一个维度，几乎为零，所以做。
 
 ### 校验
 
-- 哈希用 **argon2id**。明文密钥只在 `airprintd device add` 时打印一次，不落盘。
+- 哈希用 **argon2id**。明文密钥只在 `stickboxd device add` 时打印一次，不落盘。
 - MQTT CONNECT 钩子：`username=devid`、`password=key`。
 - 密钥明文格式为 `{key_id}.{secret}`，校验时按 `key_id` 直接定位到唯一一行，
   **不遍历该设备的所有密钥逐个 argon2**——那会让校验开销随密钥数线性增长。
@@ -251,13 +251,13 @@ ACL 判定多一个维度，几乎为零，所以做。
 不碰这些：
 
 ```
-airprintd device add <dev> [--name X]    手工签发 device 密钥（调试用）
-airprintd device list [--user <id>]
-airprintd device revoke <key_id>
-airprintd device unbind <dev>            强制解绑，处理「原持有人不配合」
-airprintd user list
-airprintd user find <手机号>              按 HMAC 查，用于申诉核验
-airprintd user phone <user_id>           解出完整号码。每次调用记审计日志
+stickboxd device add <dev> [--name X]    手工签发 device 密钥（调试用）
+stickboxd device list [--user <id>]
+stickboxd device revoke <key_id>
+stickboxd device unbind <dev>            强制解绑，处理「原持有人不配合」
+stickboxd user list
+stickboxd user find <手机号>              按 HMAC 查，用于申诉核验
+stickboxd user phone <user_id>           解出完整号码。每次调用记审计日志
 ```
 
 `device unbind` 是抢绑防护的逃生门。它绕过所有权检查，所以只能在服务器上执行，
@@ -326,7 +326,7 @@ ALTER TABLE devices ADD COLUMN user_id TEXT NOT NULL DEFAULT '';
 
 **完整号码单独成表且加密存储。** 加密是 AES-256-GCM，密钥 `phone_key` 放
 `config.json`。加密不影响任何正当用途——服务端持有密钥，
-`airprintd user phone <id>` 随时解得出来——但库文件被拷走、或备份泄露时，
+`stickboxd user phone <id>` 随时解得出来——但库文件被拷走、或备份泄露时，
 拿到的是密文。这个成本接近零，收益是把「一次备份泄露」和「全量手机号泄露」
 解耦。
 
@@ -418,7 +418,7 @@ argon2id 校验和缓存。区别只在 `devices` 表里的 `role='app'` 且 `us
 
 转让二手设备要原持有人先在 App 里解绑。和 Apple 激活锁同一个模型、同一个代价。
 区别是有了真实身份之后，用户至少能走申诉——运维用
-`airprintd device unbind <dev>` 强制解绑，该命令绕过所有权检查，
+`stickboxd device unbind <dev>` 强制解绑，该命令绕过所有权检查，
 **只能在服务器上执行，不暴露为 API**。
 
 ---
@@ -576,12 +576,12 @@ Python 版只处理了 `no-device` 一种，进程重启时正在传的作业会
 
 ## 13. 迁移与回滚
 
-- 复用同一个 `/opt/airprint/jobs.db`：加 `devices` 表、给 `jobs` 加 `err` 列，
+- 复用同一个 `/opt/stickbox/jobs.db`：加 `devices` 表、给 `jobs` 加 `err` 列，
   旧数据不动
 - 端口不变（9443 / 8883）
 - **mosquitto 直接下线**，不设并行期。设备侧要同步改密钥，并行期只会让两条
   认证路径同时半生不熟
-- 切换：停 `airprint-job.service` 和 `mosquitto.service`，起 `airprintd`
+- 切换：停 `stickbox-job.service` 和 `mosquitto.service`，起 `stickboxd`
 - 回滚：反过来。数据库双向兼容——旧版忽略新增的表和列
 
 ### 渲染链路退场
@@ -593,7 +593,7 @@ Python 版只处理了 `no-device` 一种，进程重启时正在传的作业会
 | `server/bin/render.py` | 移到 `tools/reference/`，文件头标注「不再部署」。**留档不是念旧**：它的 `fix_page_count` 是客户端 URF 编码器唯一的参考实现，那个坑客户端一样会踩 |
 | `server/bin/text2pdf.py` | 同上。PangoCairo 那套 CJK 处理是踩出来的，删了就没了 |
 | `server/web/index.html` | 删除。纯 API，无网页 |
-| `/opt/airprint/ppd/hp136a.ppd` | 服务器上保留但不再被任何代码读取，作为 render-profile 参数的人工核对依据 |
+| `/opt/stickbox/ppd/hp136a.ppd` | 服务器上保留但不再被任何代码读取，作为 render-profile 参数的人工核对依据 |
 | CUPS / `cupsfilter` / `fonts-noto-cjk` / `python3-gi` 等 | 不再是部署依赖。**先别急着从服务器卸载**——跑稳一个月再清，卸载是不可逆的 |
 
 **回滚的前提**：回滚到 Python 版需要 CUPS 仍在。这就是上面最后一条的理由。
@@ -605,7 +605,7 @@ Python 版只处理了 `no-device` 一种，进程重启时正在传的作业会
 诚实标注，别当成已有能力：
 
 - **二手设备转让**。原持有人不在 App 里解绑，新持有人就绑不上，只能走申诉由
-  运维 `airprintd device unbind`。和 Apple 激活锁同一个模型，同一个代价。
+  运维 `stickboxd device unbind`。和 Apple 激活锁同一个模型，同一个代价。
 - **多人共享一台打印机**。`users` 表是它将来的挂靠点，但共享要另设授权模型
   （谁能打、能不能看别人的作业、怎么撤销），这一版不做。
 - **更换手机号**。用新号登录会创建新账号，老账号的设备和历史不跟过去。

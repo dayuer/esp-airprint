@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/profile"
+	"github.com/dayuer/stickbox/server/go/internal/profile"
 )
 
 // 完整链路：登录 → enroll → 上传 URF → 派发信令 → 设备取件 → 回执。

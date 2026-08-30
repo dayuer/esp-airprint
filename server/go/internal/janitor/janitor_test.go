@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 func setup(t *testing.T) (*store.Store, string) {

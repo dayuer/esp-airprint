@@ -22,8 +22,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Root != "/opt/airprint" {
-		t.Errorf("Root = %q，期望默认 /opt/airprint", c.Root)
+	if c.Root != "/opt/stickbox" {
+		t.Errorf("Root = %q，期望默认 /opt/stickbox", c.Root)
 	}
 	if c.HTTPAddr != ":9443" {
 		t.Errorf("HTTPAddr = %q，期望默认 :9443", c.HTTPAddr)

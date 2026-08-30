@@ -23,12 +23,14 @@
 
 static const char *TAG = "prov";
 #define NVS_NS "wifi"
+#define NVS_CLOUD "cloud"      /* 设备密钥，见 API 文档 1.3 */
 
 /* 连接测试状态：0=进行中 1=成功 2=失败 */
 static volatile int  s_test_state;
 static char          s_test_err[48];
 static char          s_test_ip[16];
 static char          s_try_ssid[33], s_try_pass[65];
+static char          s_try_key[80];      /* 令牌 45 字符，留足余量 */
 static EventGroupHandle_t s_eg;
 #define EV_OK   BIT0
 #define EV_FAIL BIT1
@@ -46,6 +48,17 @@ bool prov_load(char *ssid, size_t sl, char *pass, size_t pl)
     return ok;
 }
 
+bool prov_load_devkey(char *out, size_t cap)
+{
+    out[0] = 0;
+    nvs_handle_t h;
+    if (nvs_open(NVS_CLOUD, NVS_READONLY, &h) != ESP_OK) return false;
+    size_t n = cap;
+    bool ok = (nvs_get_str(h, "devkey", out, &n) == ESP_OK) && out[0];
+    nvs_close(h);
+    return ok;
+}
+
 static void prov_save(const char *ssid, const char *pass)
 {
     nvs_handle_t h;
@@ -54,12 +67,24 @@ static void prov_save(const char *ssid, const char *pass)
     nvs_set_str(h, "pass", pass);
     nvs_commit(h);
     nvs_close(h);
+
+    /* 设备密钥单独一个 namespace：Wi-Fi 可能换，密钥不该跟着丢。
+     * 只在这次真填了才写——留空表示「不动已有的密钥」。 */
+    if (s_try_key[0] && nvs_open(NVS_CLOUD, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, "devkey", s_try_key);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "设备密钥已写入 NVS（%d 字符）", (int)strlen(s_try_key));
+    }
     ESP_LOGI(TAG, "凭据已写入 NVS");
 }
 
 void prov_erase(void)
 {
     nvs_handle_t h;
+    if (nvs_open(NVS_CLOUD, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_all(h); nvs_commit(h); nvs_close(h);
+    }
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_erase_all(h);
     nvs_commit(h);
@@ -202,7 +227,7 @@ static void try_connect_task(void *arg)
 
 static esp_err_t h_connect(httpd_req_t *r)
 {
-    char body[256];
+    char body[384];      /* ssid 32 + pass 64 + 密钥 45 + JSON 外壳 */
     int n = r->content_len < sizeof body - 1 ? r->content_len : (int)sizeof body - 1;
     int got = httpd_req_recv(r, body, n);
     if (got <= 0) return httpd_resp_send_500(r);
@@ -210,6 +235,7 @@ static esp_err_t h_connect(httpd_req_t *r)
 
     json_str(body, "s", s_try_ssid, sizeof s_try_ssid);
     json_str(body, "p", s_try_pass, sizeof s_try_pass);
+    json_str(body, "k", s_try_key,  sizeof s_try_key);   /* 设备密钥，可留空 */
     if (!s_try_ssid[0]) {
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_send(r, "{\"ok\":0}", HTTPD_RESP_USE_STRLEN);
@@ -267,7 +293,7 @@ void prov_portal_run(void)
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     wifi_config_t ap = { 0 };
-    snprintf((char *)ap.ap.ssid, sizeof ap.ap.ssid, "AirPrint-Setup-%02X%02X", mac[4], mac[5]);
+    snprintf((char *)ap.ap.ssid, sizeof ap.ap.ssid, "StickBox-Setup-%02X%02X", mac[4], mac[5]);
     ap.ap.ssid_len = strlen((char *)ap.ap.ssid);
     ap.ap.authmode = WIFI_AUTH_OPEN;        /* 开放热点，免密码 */
     ap.ap.max_connection = 4;

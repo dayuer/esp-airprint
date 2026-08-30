@@ -2,7 +2,7 @@
 
 面向 iOS / Android，React Native 0.87。目标是可上架的消费级产品。
 
-对应 API：`docs/API-cloud-print.md`（v2 / `airprintd`）。
+对应 API：`docs/API-cloud-print.md`（v2 / `stickboxd`）。
 
 ---
 
@@ -42,8 +42,8 @@ app/
 │   ├─ packbits.{h,cpp}
 │   └─ tests/
 ├─ ios/
-│   ├─ AirPrint/        主 app
-│   ├─ AirPrintShare/   Share Extension target
+│   ├─ StickBox/        主 app
+│   ├─ StickBoxShare/   Share Extension target
 │   └─ RasterKit/       ObjC++ TurboModule
 ├─ android/
 │   ├─ app/             主 app（含 ACTION_SEND intent-filter）

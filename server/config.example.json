@@ -1,5 +1,5 @@
 {
-  "root": "/opt/airprint",
+  "root": "/opt/stickbox",
   "cert_dir": "/etc/letsencrypt/live/your.host",
   "http_addr": ":9443",
   "mqtt_addr": ":8883",

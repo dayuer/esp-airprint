@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type Registry struct {

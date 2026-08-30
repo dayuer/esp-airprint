@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/profile"
+	"github.com/dayuer/stickbox/server/go/internal/profile"
 )
 
 const identBody = `{"serial":"CNB9K1P2X4","vid":"03F0","pid":"F22A",` +

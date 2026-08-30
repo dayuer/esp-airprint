@@ -1,6 +1,6 @@
 package auth
 
-import "github.com/dayuer/esp-airprint/server/go/internal/store"
+import "github.com/dayuer/stickbox/server/go/internal/store"
 
 // SessionStore 是签发与吊销需要的 store 能力。
 type SessionStore interface {

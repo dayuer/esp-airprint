@@ -1,18 +1,18 @@
 [Unit]
-Description=AirPrint 云打印服务（Go）
+Description=StickBox 云打印服务（Go）
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/airprint/bin/airprintd -conf /opt/airprint/config.json
+ExecStart=/opt/stickbox/bin/stickboxd -conf /opt/stickbox/config.json
 Restart=always
 RestartSec=3
-User=airprint
-Group=airprint
+User=stickbox
+Group=stickbox
 
-# Let's Encrypt 的私钥默认 root-only，部署时把 airprint 加进能读它的组
-ReadWritePaths=/opt/airprint
+# Let's Encrypt 的私钥默认 root-only，部署时把 stickbox 加进能读它的组
+ReadWritePaths=/opt/stickbox
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

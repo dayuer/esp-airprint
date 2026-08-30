@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 type nopPub struct {

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/profile"
-	"github.com/dayuer/esp-airprint/server/go/internal/raster"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/profile"
+	"github.com/dayuer/stickbox/server/go/internal/raster"
 )
 
 var reDev = regexp.MustCompile(`^[0-9a-f]{12}$`)

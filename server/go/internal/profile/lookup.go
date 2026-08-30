@@ -3,7 +3,7 @@ package profile
 import (
 	"log/slog"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Store 是 profile 对持久层的窄依赖。

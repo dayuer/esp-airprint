@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
 )
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

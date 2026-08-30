@@ -1,4 +1,4 @@
-# airprintd 部署
+# stickboxd 部署
 
 Go 重写版的部署说明。设计见
 `docs/superpowers/specs/2026-08-30-go-print-server-design.md`，
@@ -12,7 +12,7 @@ Go 重写版的部署说明。设计见
 ## 1. 构建
 
 ```bash
-cd server/go && CGO_ENABLED=0 go build -ldflags "-X github.com/dayuer/esp-airprint/server/go/internal/version.Version=$(git describe --tags --always)" -o airprintd ./cmd/airprintd
+cd server/go && CGO_ENABLED=0 go build -ldflags "-X github.com/dayuer/stickbox/server/go/internal/version.Version=$(git describe --tags --always)" -o stickboxd ./cmd/stickboxd
 ```
 
 `CGO_ENABLED=0` 可行是因为 sqlite 用的是纯 Go 的 `modernc.org/sqlite`。
@@ -21,9 +21,9 @@ cd server/go && CGO_ENABLED=0 go build -ldflags "-X github.com/dayuer/esp-airpri
 ## 2. 首次部署
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin airprint
-sudo mkdir -p /opt/airprint/{bin,jobs,idents}
-sudo chown -R airprint:airprint /opt/airprint
+sudo useradd -r -s /usr/sbin/nologin stickbox
+sudo mkdir -p /opt/stickbox/{bin,jobs,idents}
+sudo chown -R stickbox:stickbox /opt/stickbox
 ```
 
 生成两把密钥：
@@ -32,7 +32,7 @@ sudo chown -R airprint:airprint /opt/airprint
 openssl rand -hex 32
 ```
 
-照 `server/config.example.json` 写 `/opt/airprint/config.json`，权限 `600`。
+照 `server/config.example.json` 写 `/opt/stickbox/config.json`，权限 `600`。
 
 ## 3. 两把密钥的运维含义（这一节最重要）
 
@@ -49,12 +49,12 @@ openssl rand -hex 32
 certbot 照旧。**deploy hook 从「必需」降级为「可选」**——进程按文件 mtime
 自己热重载，不再需要靠重启换证书。
 
-hook 仍建议保留一条：改权限，让 `airprint` 用户读得到私钥。
+hook 仍建议保留一条：改权限，让 `stickbox` 用户读得到私钥。
 
 验证热重载生效：
 
 ```bash
-sudo touch /etc/letsencrypt/live/mqtt.silkline.id/fullchain.pem && sudo journalctl -u airprintd -n 20 | grep 热重载
+sudo touch /etc/letsencrypt/live/mqtt.silkline.id/fullchain.pem && sudo journalctl -u stickboxd -n 20 | grep 热重载
 ```
 
 ## 5. 备份
@@ -68,7 +68,7 @@ App 随时可以重新生成。
 ## 6. 切换
 
 ```bash
-sudo systemctl stop airprint-job.service mosquitto.service
+sudo systemctl stop stickbox-job.service mosquitto.service
 ```
 
 ```bash
@@ -76,7 +76,7 @@ sudo systemctl disable mosquitto.service
 ```
 
 ```bash
-sudo cp server/airprintd.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now airprintd.service
+sudo cp server/stickboxd.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now stickboxd.service
 ```
 
 **mosquitto 直接下线，不设并行期。** broker 已内嵌，设备侧要同步改密钥，
@@ -128,7 +128,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mqtt.silkline.id:9443/a
 ## 9. 运维子命令
 
 ```bash
-sudo -u airprint /opt/airprint/bin/airprintd -conf /opt/airprint/config.json device list
+sudo -u stickbox /opt/stickbox/bin/stickboxd -conf /opt/stickbox/config.json device list
 ```
 
 | 命令 | 用途 |
@@ -138,7 +138,7 @@ sudo -u airprint /opt/airprint/bin/airprintd -conf /opt/airprint/config.json dev
 | `device revoke <key_id>` | 吊销一把 |
 | `device unbind <dev>` | **强制解绑**，处理「二手转让但原持有人不配合」 |
 | `user list` | 列出用户，只显示手机尾号 |
-| `user phone <user_id>` | 解出完整号码，**每次调用写 `/opt/airprint/audit.log`** |
+| `user phone <user_id>` | 解出完整号码，**每次调用写 `/opt/stickbox/audit.log`** |
 
 `device unbind` 绕过所有权检查，所以只能在服务器上执行，不暴露为 API。
 `user phone` 是唯一能解出完整号码的入口。
@@ -149,5 +149,5 @@ sudo -u airprint /opt/airprint/bin/airprintd -conf /opt/airprint/config.json dev
   改动，删除前先确认。** 回滚要用它
 - `tools/reference/render.py`、`text2pdf.py` —— 已标注不再部署。
   `fix_page_count` 是 App 端 URF 编码器的参考实现，别删
-- `/opt/airprint/ppd/hp136a.ppd` —— 不再被任何代码读取，留作 render-profile
+- `/opt/stickbox/ppd/hp136a.ppd` —— 不再被任何代码读取，留作 render-profile
   参数的人工核对依据

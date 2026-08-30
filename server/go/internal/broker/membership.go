@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 // Membership 回答「这个 dev 属于这个 user 吗」，带缓存。

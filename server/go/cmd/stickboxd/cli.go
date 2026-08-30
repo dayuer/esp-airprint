@@ -7,18 +7,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/store"
 )
 
 const cliUsage = `用法：
-  airprintd device add <dev> [name]     手工签发 device 密钥（调试用）
-  airprintd device list                 列出全部密钥
-  airprintd device revoke <key_id>      吊销一把密钥
-  airprintd device unbind <dev>         强制解绑（原持有人不配合时用）
-  airprintd user list                   列出用户（只显示尾号）
-  airprintd user phone <user_id>        解出完整号码，记审计日志
+  stickboxd device add <dev> [name]     手工签发 device 密钥（调试用）
+  stickboxd device list                 列出全部密钥
+  stickboxd device revoke <key_id>      吊销一把密钥
+  stickboxd device unbind <dev>         强制解绑（原持有人不配合时用）
+  stickboxd user list                   列出用户（只显示尾号）
+  stickboxd user phone <user_id>        解出完整号码，记审计日志
 
 正常用户走 App 的 enroll，不需要这些命令。`
 

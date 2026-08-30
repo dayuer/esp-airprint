@@ -3,9 +3,9 @@ Description=Cloud print job service
 After=network.target mosquitto.service
 Requires=mosquitto.service
 [Service]
-ExecStart=/usr/bin/python3 /opt/airprint/bin/jobsrv.py
+ExecStart=/usr/bin/python3 /opt/stickbox/bin/jobsrv.py
 Restart=always
 RestartSec=3
-WorkingDirectory=/opt/airprint
+WorkingDirectory=/opt/stickbox
 [Install]
 WantedBy=multi-user.target

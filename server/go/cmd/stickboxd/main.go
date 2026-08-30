@@ -11,21 +11,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/auth"
-	"github.com/dayuer/esp-airprint/server/go/internal/broker"
-	"github.com/dayuer/esp-airprint/server/go/internal/config"
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
-	"github.com/dayuer/esp-airprint/server/go/internal/httpapi"
-	"github.com/dayuer/esp-airprint/server/go/internal/janitor"
-	"github.com/dayuer/esp-airprint/server/go/internal/registry"
-	"github.com/dayuer/esp-airprint/server/go/internal/sms"
-	"github.com/dayuer/esp-airprint/server/go/internal/store"
-	"github.com/dayuer/esp-airprint/server/go/internal/tlsx"
-	"github.com/dayuer/esp-airprint/server/go/internal/version"
+	"github.com/dayuer/stickbox/server/go/internal/auth"
+	"github.com/dayuer/stickbox/server/go/internal/broker"
+	"github.com/dayuer/stickbox/server/go/internal/config"
+	"github.com/dayuer/stickbox/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/httpapi"
+	"github.com/dayuer/stickbox/server/go/internal/janitor"
+	"github.com/dayuer/stickbox/server/go/internal/registry"
+	"github.com/dayuer/stickbox/server/go/internal/sms"
+	"github.com/dayuer/stickbox/server/go/internal/store"
+	"github.com/dayuer/stickbox/server/go/internal/tlsx"
+	"github.com/dayuer/stickbox/server/go/internal/version"
 )
 
 func main() {
-	confPath := flag.String("conf", envOr("AIRPRINT_CONF", "/opt/airprint/config.json"),
+	confPath := flag.String("conf", envOr("STICKBOX_CONF", "/opt/stickbox/config.json"),
 		"配置文件路径")
 	flag.Parse()
 

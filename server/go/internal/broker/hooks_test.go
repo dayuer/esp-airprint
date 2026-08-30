@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dayuer/esp-airprint/server/go/internal/device"
+	"github.com/dayuer/stickbox/server/go/internal/device"
 )
 
 type capturedMsg struct {
