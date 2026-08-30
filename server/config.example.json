@@ -1,7 +1,22 @@
 {
-  "mqtt_host": "127.0.0.1",
-  "mqtt_port": 1883,
-  "mqtt_user": "server",
-  "mqtt_pass": "改成你的口令",
-  "cert_dir": "/etc/letsencrypt/live/your.host"
+  "root": "/opt/airprint",
+  "cert_dir": "/etc/letsencrypt/live/your.host",
+  "http_addr": ":9443",
+  "mqtt_addr": ":8883",
+  "job_retain_hours": 24,
+  "job_retain_per_device": 50,
+
+  "_comment_pepper": "换了它全体用户无法登录（HMAC 对不上）。绝不轮换。",
+  "phone_pepper": "改成一串随机值",
+
+  "_comment_key": "AES-256-GCM 密钥，64 位 hex。换了它旧的加密号码解不开，但登录不受影响。",
+  "phone_key": "改成 32 字节随机值的 hex",
+
+  "sms": {
+    "provider": "aliyun",
+    "access_key_id": "",
+    "access_key_secret": "",
+    "sign_name": "",
+    "template_code": ""
+  }
 }

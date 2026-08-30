@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """文本 → PDF，用 PangoCairo 排版。
 
+⚠ 不再部署。服务端已改为纯管道，光栅由 App 完成。留档是因为下面这段
+「为什么不用 texttopdf / paps」是实测踩出来的结论，删了就没了。
+App 在手机上排版中文不会遇到这个问题（系统自带 CJK 字体），
+但换回服务端渲染时会立刻再撞上。
+
 为什么不用 CUPS 的 texttopdf 或 paps：
   - texttopdf 不带 CJK 字体，中文变方框
   - Debian 的 paps 是 0.6.7，输出 PostScript 时写死 /Helvetica，同样是方框
