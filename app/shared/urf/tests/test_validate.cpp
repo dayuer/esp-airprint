@@ -25,7 +25,7 @@ static Bytes MinimalUrf() {
 }
 
 TEST(黄金样本能被识别出尺寸) {
-  const std::string path = "/tmp/urf_golden.urf";
+  const std::string path = urftest::TmpPath("urf_golden.urf");
   WriteRaw(path, MinimalUrf());
   urf::ValidateResult r = urf::Validate(path);
   CHECK_EQ(r.declared_pages, 1u);
@@ -34,7 +34,7 @@ TEST(黄金样本能被识别出尺寸) {
 }
 
 TEST(魔数不对要报错) {
-  const std::string path = "/tmp/urf_badmagic.urf";
+  const std::string path = urftest::TmpPath("urf_badmagic.urf");
   Bytes d = MinimalUrf();
   d[0] = '%';   // 冒充 PDF
   WriteRaw(path, d);
@@ -44,7 +44,7 @@ TEST(魔数不对要报错) {
 }
 
 TEST(页数字段为零要报错) {
-  const std::string path = "/tmp/urf_zeropages.urf";
+  const std::string path = urftest::TmpPath("urf_zeropages.urf");
   Bytes d = MinimalUrf();
   d[11] = 0;
   WriteRaw(path, d);
@@ -54,7 +54,7 @@ TEST(页数字段为零要报错) {
 }
 
 TEST(尺寸越界要报错) {
-  const std::string path = "/tmp/urf_bigdim.urf";
+  const std::string path = urftest::TmpPath("urf_bigdim.urf");
   Bytes d = MinimalUrf();
   d[12 + 12] = 0xFF;
   d[12 + 13] = 0xFF;
@@ -64,7 +64,7 @@ TEST(尺寸越界要报错) {
 }
 
 TEST(Writer的产物必须自洽) {
-  const std::string path = "/tmp/urf_roundtrip.urf";
+  const std::string path = urftest::TmpPath("urf_roundtrip.urf");
   {
     urf::PageSpec s;
     s.width_px = 200;
@@ -91,7 +91,7 @@ TEST(Writer的产物必须自洽) {
 }
 
 static std::string MakeOnePageFile(uint32_t w, uint32_t h) {
-  const std::string path = "/tmp/urf_upload_check.urf";
+  const std::string path = urftest::TmpPath("urf_upload_check.urf");
   urf::PageSpec s;
   s.width_px = w;
   s.height_px = h;

@@ -73,7 +73,7 @@ TEST(页头保留字节必须是零) {
 }
 
 TEST(写一页并回填页数) {
-  const std::string path = "/tmp/urf_test_one.urf";
+  const std::string path = urftest::TmpPath("urf_test_one.urf");
   {
     urf::Writer w(path);
     w.BeginPage(SmallSpec(4, 2));
@@ -91,7 +91,7 @@ TEST(写一页并回填页数) {
 }
 
 TEST(写两页页数是2) {
-  const std::string path = "/tmp/urf_test_two.urf";
+  const std::string path = urftest::TmpPath("urf_test_two.urf");
   {
     urf::Writer w(path);
     std::vector<uint8_t> row = {0x10, 0x20};
@@ -108,7 +108,7 @@ TEST(写两页页数是2) {
 }
 
 TEST(分多批喂行) {
-  const std::string path = "/tmp/urf_test_bands.urf";
+  const std::string path = urftest::TmpPath("urf_test_bands.urf");
   {
     urf::Writer w(path);
     w.BeginPage(SmallSpec(2, 4));
@@ -126,7 +126,7 @@ TEST(分多批喂行) {
 TEST(行数不足时EndPage要抛) {
   bool threw = false;
   try {
-    urf::Writer w("/tmp/urf_test_short.urf");
+    urf::Writer w(urftest::TmpPath("urf_test_short.urf"));
     w.BeginPage(SmallSpec(2, 4));
     std::vector<uint8_t> band = {0x01, 0x01};
     w.WriteRows(band.data(), 1);
@@ -138,7 +138,7 @@ TEST(行数不足时EndPage要抛) {
 TEST(行数超出时WriteRows要抛) {
   bool threw = false;
   try {
-    urf::Writer w("/tmp/urf_test_over.urf");
+    urf::Writer w(urftest::TmpPath("urf_test_over.urf"));
     w.BeginPage(SmallSpec(2, 1));
     std::vector<uint8_t> band = {0x01, 0x01, 0x02, 0x02};
     w.WriteRows(band.data(), 2);
@@ -149,7 +149,7 @@ TEST(行数超出时WriteRows要抛) {
 TEST(零尺寸页要抛) {
   bool threw = false;
   try {
-    urf::Writer w("/tmp/urf_test_zero.urf");
+    urf::Writer w(urftest::TmpPath("urf_test_zero.urf"));
     w.BeginPage(SmallSpec(0, 10));
   } catch (const std::runtime_error&) { threw = true; }
   CHECK(threw);
@@ -158,14 +158,14 @@ TEST(零尺寸页要抛) {
 TEST(一页都没有就Close要抛) {
   bool threw = false;
   try {
-    urf::Writer w("/tmp/urf_test_empty.urf");
+    urf::Writer w(urftest::TmpPath("urf_test_empty.urf"));
     w.Close();   // 页数 0 会让打印机认为文档为空
   } catch (const std::runtime_error&) { threw = true; }
   CHECK(threw);
 }
 
 TEST(默认关闭时每行都有独立的重复计数零) {
-  const std::string path = "/tmp/urf_norepeat.urf";
+  const std::string path = urftest::TmpPath("urf_norepeat.urf");
   {
     urf::Writer w(path);   // 默认关闭
     w.BeginPage(SmallSpec(2, 3));
@@ -181,7 +181,7 @@ TEST(默认关闭时每行都有独立的重复计数零) {
 }
 
 TEST(打开后三行相同合并成一条) {
-  const std::string path = "/tmp/urf_repeat.urf";
+  const std::string path = urftest::TmpPath("urf_repeat.urf");
   {
     urf::Writer w(path, /*line_repeat=*/true);
     w.BeginPage(SmallSpec(2, 3));
@@ -197,7 +197,7 @@ TEST(打开后三行相同合并成一条) {
 }
 
 TEST(打开后不同的行不合并) {
-  const std::string path = "/tmp/urf_repeat_mixed.urf";
+  const std::string path = urftest::TmpPath("urf_repeat_mixed.urf");
   {
     urf::Writer w(path, /*line_repeat=*/true);
     w.BeginPage(SmallSpec(2, 3));
@@ -213,7 +213,7 @@ TEST(打开后不同的行不合并) {
 }
 
 TEST(重复计数上限256行后另起一条) {
-  const std::string path = "/tmp/urf_repeat_cap.urf";
+  const std::string path = urftest::TmpPath("urf_repeat_cap.urf");
   {
     urf::Writer w(path, /*line_repeat=*/true);
     w.BeginPage(SmallSpec(2, 300));
@@ -233,7 +233,7 @@ TEST(重复计数上限256行后另起一条) {
 // 全程不构造整页缓冲。它守的是「峰值内存与页面尺寸无关」这条设计主张：
 // 谁把 Writer 改成需要整页缓冲，这里就会因为内存暴涨而变慢或失败。
 TEST(A4整页按条带写入) {
-  const std::string path = "/tmp/urf_a4.urf";
+  const std::string path = urftest::TmpPath("urf_a4.urf");
   const uint32_t kW = 4962, kH = 7014, kBand = 400;
 
   std::vector<uint8_t> band(static_cast<size_t>(kW) * kBand);

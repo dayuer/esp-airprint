@@ -14,6 +14,9 @@ int& failures();
 void fail(const char* file, int line, const std::string& msg);
 std::string hex(const std::vector<unsigned char>& v);
 
+// 测试产物的落盘目录。Android 上没有 /tmp，用环境变量 URF_TEST_TMPDIR 覆盖。
+std::string TmpPath(const std::string& name);
+
 // 用一个构造函数做注册，避免 -Wunused-const-variable。
 struct Registrar {
   Registrar(const char* name, void (*fn)()) { registry().push_back({name, fn}); }

@@ -6,11 +6,61 @@ namespace {
 
 constexpr uint32_t kMaxDimension = 30000;
 
-uint32_t ReadBE32(const std::vector<uint8_t>& d, size_t off) {
-  return (static_cast<uint32_t>(d[off]) << 24) |
-         (static_cast<uint32_t>(d[off + 1]) << 16) |
-         (static_cast<uint32_t>(d[off + 2]) << 8) |
-         static_cast<uint32_t>(d[off + 3]);
+// 带缓冲的顺序读。
+//
+// 早先的实现把整个文件读进 std::vector 再扫，在 Android 真机上测出峰值常驻
+// 内存 71MB——A4 整页产物 35MB，vector 扩容翻倍就是 70MB。而作业上限是
+// 200MB（API 文档 4.4），照那个写法上传前自校验会先把手机打死。
+// 校验器只需要顺序前进，不需要随机访问，所以流式读就够。
+class ByteSource {
+ public:
+  explicit ByteSource(std::FILE* fp) : fp_(fp) {}
+
+  // 读一个字节。到文件尾返回 false。
+  bool Read(uint8_t* out) {
+    if (pos_ == len_ && !Refill()) return false;
+    *out = buf_[pos_++];
+    return true;
+  }
+
+  // 读满 n 个字节。不够返回 false。
+  bool ReadExact(uint8_t* dst, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+      if (!Read(dst + i)) return false;
+    }
+    return true;
+  }
+
+  // 跳过 n 个字节。不够返回 false。
+  bool Skip(size_t n) {
+    while (n > 0) {
+      if (pos_ == len_ && !Refill()) return false;
+      size_t avail = len_ - pos_;
+      size_t take = (n < avail) ? n : avail;
+      pos_ += take;
+      n -= take;
+    }
+    return true;
+  }
+
+ private:
+  bool Refill() {
+    len_ = std::fread(buf_, 1, sizeof buf_, fp_);
+    pos_ = 0;
+    return len_ > 0;
+  }
+
+  std::FILE* fp_;
+  uint8_t buf_[65536];
+  size_t pos_ = 0;
+  size_t len_ = 0;
+};
+
+uint32_t ReadBE32(const uint8_t* d) {
+  return (static_cast<uint32_t>(d[0]) << 24) |
+         (static_cast<uint32_t>(d[1]) << 16) |
+         (static_cast<uint32_t>(d[2]) << 8) |
+         static_cast<uint32_t>(d[3]);
 }
 
 }  // namespace
@@ -20,48 +70,66 @@ ValidateResult Validate(const std::string& path) {
 
   std::FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) { r.error = "打不开文件: " + path; return r; }
-  std::vector<uint8_t> d;
-  uint8_t chunk[65536];
-  size_t n;
-  while ((n = std::fread(chunk, 1, sizeof chunk, f)) > 0)
-    d.insert(d.end(), chunk, chunk + n);
-  std::fclose(f);
+  ByteSource src(f);
 
-  static const uint8_t kMagic[8] = {'U', 'N', 'I', 'R', 'A', 'S', 'T', 0x00};
-  if (d.size() < 12) { r.error = "文件不足 12 字节，连文件头都不够"; return r; }
-  for (int i = 0; i < 8; ++i) {
-    if (d[i] != kMagic[i]) { r.error = "魔数不匹配，期望 UNIRAST\\0"; return r; }
+  uint8_t head[12];
+  if (!src.ReadExact(head, sizeof head)) {
+    std::fclose(f);
+    r.error = "文件不足 12 字节，连文件头都不够";
+    return r;
   }
 
-  r.declared_pages = ReadBE32(d, 8);
+  static const uint8_t kMagic[8] = {'U', 'N', 'I', 'R', 'A', 'S', 'T', 0x00};
+  for (int i = 0; i < 8; ++i) {
+    if (head[i] != kMagic[i]) {
+      std::fclose(f);
+      r.error = "魔数不匹配，期望 UNIRAST\\0";
+      return r;
+    }
+  }
+
+  r.declared_pages = ReadBE32(head + 8);
   if (r.declared_pages == 0) {
+    std::fclose(f);
     r.error = "页数字段为 0，打印机会认为文档为空";
     return r;
   }
 
   // 逐页扫描。规则与 tools/reference/render.py 的 fix_page_count 一致。
-  size_t pos = 12;
-  while (pos + 32 <= d.size()) {
-    uint32_t w = ReadBE32(d, pos + 12);
-    uint32_t h = ReadBE32(d, pos + 16);
+  for (;;) {
+    uint8_t ph[32];
+    if (!src.ReadExact(ph, sizeof ph)) break;   // 没有下一页了
+
+    uint32_t w = ReadBE32(ph + 12);
+    uint32_t h = ReadBE32(ph + 16);
     if (w == 0 || w >= kMaxDimension || h == 0 || h >= kMaxDimension) break;
     if (r.actual_pages == 0) { r.width_px = w; r.height_px = h; }
     ++r.actual_pages;
-    pos += 32;
 
     uint32_t rows = 0;
-    while (rows < h && pos < d.size()) {
-      ++pos;      // 行重复计数
+    bool truncated = false;
+    while (rows < h) {
+      uint8_t ignored;
+      if (!src.Read(&ignored)) { truncated = true; break; }   // 行重复计数
       ++rows;
-      while (pos < d.size()) {
-        uint8_t c = d[pos++];
+      for (;;) {
+        uint8_t c;
+        if (!src.Read(&c)) { truncated = true; break; }
         if (c == 128) break;
-        pos += (c < 128) ? 1 : static_cast<size_t>(257 - c);
+        if (!src.Skip((c < 128) ? 1u : static_cast<size_t>(257 - c))) {
+          truncated = true;
+          break;
+        }
       }
+      if (truncated) break;
     }
-    if (rows != h) { r.error = "第 " + std::to_string(r.actual_pages) +
-                               " 页的行数据不完整"; return r; }
+    if (rows != h || truncated) {
+      std::fclose(f);
+      r.error = "第 " + std::to_string(r.actual_pages) + " 页的行数据不完整";
+      return r;
+    }
   }
+  std::fclose(f);
 
   if (r.actual_pages == 0) { r.error = "扫不出任何一页，首页尺寸非法"; return r; }
   if (r.actual_pages != r.declared_pages) {
