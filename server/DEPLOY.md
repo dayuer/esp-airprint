@@ -49,7 +49,29 @@ openssl rand -hex 32
 certbot 照旧。**deploy hook 从「必需」降级为「可选」**——进程按文件 mtime
 自己热重载，不再需要靠重启换证书。
 
-hook 仍建议保留一条：改权限，让 `stickbox` 用户读得到私钥。
+### ⚠ 但旧 hook 必须改，不然会在续签时把停掉的服务拉起来
+
+原来的 `/etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh` 最后一行是：
+
+```
+systemctl reload mosquitto || systemctl restart mosquitto; systemctl restart airprint-job
+```
+
+切到 stickboxd 之后 mosquitto 已经停用，**这行会在下次续签时把它拉起来抢占
+8883**。而且是几十天后才发作，现场没人会想到是证书续签干的。
+
+改成只留改权限的两行——stickbox 用户要靠它们读到私钥：
+
+```sh
+#!/bin/sh
+chgrp -R ssl-cert /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null
+chmod -R g+rX /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null
+```
+
+### 私钥读不到时先看补充组
+
+`usermod -aG ssl-cert stickbox` 只改了用户的组，**systemd 服务默认不带补充组**。
+单元文件里必须有 `SupplementaryGroups=ssl-cert`，否则服务起来读不到 privkey。
 
 验证热重载生效：
 
@@ -64,6 +86,26 @@ sudo touch /etc/letsencrypt/live/mqtt.silkline.id/fullchain.pem && sudo journalc
 
 作业文件（`jobs/*.urf`）不用备份——URF 是光栅，单份 200KB~15MB，且
 App 随时可以重新生成。
+
+## 5b. ⚠ 别用 root 试跑二进制
+
+`sqlite: attempt to write a readonly database (8)` 十有八九是这么来的：
+先用 root 手动跑了一次 `stickboxd`，它把 `jobs.db` 建成了 root 属主，
+之后服务以 `stickbox` 身份启动就写不进去。
+
+排查一眼就够：
+
+```bash
+ls -la /opt/stickbox/*.db
+```
+
+修法：
+
+```bash
+chown -R stickbox:stickbox /opt/stickbox && systemctl restart stickboxd
+```
+
+要试跑就带上身份：`sudo -u stickbox /opt/stickbox/bin/stickboxd -conf ...`
 
 ## 6. 切换
 

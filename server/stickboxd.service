@@ -10,6 +10,9 @@ Restart=always
 RestartSec=3
 User=stickbox
 Group=stickbox
+# 读 Let's Encrypt 私钥要这个。只把用户加进 ssl-cert 组不够——
+# systemd 默认不带补充组，服务起来仍然读不到 privkey。
+SupplementaryGroups=ssl-cert
 
 # Let's Encrypt 的私钥默认 root-only，部署时把 stickbox 加进能读它的组
 ReadWritePaths=/opt/stickbox
