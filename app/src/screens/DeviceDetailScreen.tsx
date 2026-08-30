@@ -70,9 +70,11 @@ export function formatBytes(n: number): string {
 export function DeviceDetailScreen({
   device,
   onUnbound,
+  onRunTests,
 }: {
   device: DeviceListItem;
   onUnbound: () => void;
+  onRunTests: (dev: string) => void;
 }) {
   const {c} = useTheme();
   const insets = useSafeAreaInsets();
@@ -235,6 +237,13 @@ export function DeviceDetailScreen({
               不发作业结束符时第二份不会出纸。
             </Text>
           )}
+          <View style={styles.testBtn}>
+            <Button
+              title="做适配测试"
+              variant={suggestTest ? 'primary' : 'quiet'}
+              onPress={() => onRunTests(device.dev)}
+            />
+          </View>
         </Section>
       )}
 
@@ -288,6 +297,7 @@ const styles = StyleSheet.create({
   error: {paddingHorizontal: space.lg, paddingTop: space.lg},
   loading: {marginTop: space.xxl},
   note: {paddingHorizontal: space.lg, paddingBottom: space.md, lineHeight: 20},
+  testBtn: {paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.md},
   actions: {paddingHorizontal: space.lg, marginTop: space.xxl},
   legal: {marginTop: space.md, lineHeight: 18},
 });

@@ -11,6 +11,7 @@ import {CodeScreen} from '../screens/CodeScreen';
 import {DeviceDetailScreen} from '../screens/DeviceDetailScreen';
 import {DeviceListScreen} from '../screens/DeviceListScreen';
 import {PhoneScreen} from '../screens/PhoneScreen';
+import {AdaptTestScreen} from '../screens/AdaptTestScreen';
 import {ProvisionScreen} from '../screens/ProvisionScreen';
 import {useTheme} from '../ui/useTheme';
 import {API_BASE_URL} from '../config';
@@ -21,6 +22,7 @@ export type AppStackParams = {
   DeviceList: undefined;
   DeviceDetail: {device: DeviceListItem};
   Provision: undefined;
+  AdaptTest: {dev: string};
 };
 
 const Stack = createNativeStackNavigator<AppStackParams>();
@@ -48,11 +50,15 @@ function AppStack() {
       <Stack.Screen name="Provision" options={{title: '', headerBackTitle: '设备'}}>
         {({navigation}) => <ProvisionScreen onDone={() => navigation.goBack()} />}
       </Stack.Screen>
+      <Stack.Screen name="AdaptTest" options={{title: '', headerBackTitle: '返回'}}>
+        {({route}) => <AdaptTestScreen dev={route.params.dev} />}
+      </Stack.Screen>
       <Stack.Screen name="DeviceDetail" options={{title: '', headerBackTitle: '设备'}}>
         {({route, navigation}) => (
           <DeviceDetailScreen
             device={route.params.device}
             onUnbound={() => navigation.goBack()}
+            onRunTests={dev => navigation.navigate('AdaptTest', {dev})}
           />
         )}
       </Stack.Screen>
