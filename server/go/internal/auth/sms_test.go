@@ -180,3 +180,43 @@ func TestConsumedCodeCannotBeReused(t *testing.T) {
 		t.Error("空验证码匹配上了被清空的 code_hash")
 	}
 }
+
+// 固定手机号：不发短信、不受限流，验证码恒定。
+func TestDevLoginBypass(t *testing.T) {
+	s, f, _ := newSMS(t)
+	s.SetDevLogin("DEVH", "424242")
+	ctx := context.Background()
+
+	// 连续发三次都不该被 60 秒闸挡住——测试要能连续登录
+	for i := 0; i < 3; i++ {
+		if err := s.Issue(ctx, "13800000000", "DEVH", "1.2.3.4"); err != nil {
+			t.Fatalf("第 %d 次被拒：%v", i+1, err)
+		}
+	}
+	if len(f.sent) != 0 {
+		t.Errorf("固定号码发了 %d 条真短信", len(f.sent))
+	}
+	if err := s.Verify("DEVH", "424242"); err != nil {
+		t.Errorf("固定验证码校验失败：%v", err)
+	}
+}
+
+// 旁路只对那一个号码生效，别的号码照常限流、照常发短信。
+func TestDevLoginDoesNotLeakToOthers(t *testing.T) {
+	s, f, _ := newSMS(t)
+	s.SetDevLogin("DEVH", "424242")
+	ctx := context.Background()
+
+	if err := s.Issue(ctx, "13900009999", "OTHER", "1.2.3.4"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.sent) != 1 {
+		t.Fatalf("普通号码没走真发送路径，sent=%v", f.sent)
+	}
+	if err := s.Verify("OTHER", "424242"); err == nil {
+		t.Error("固定验证码在别的号码上也能用——旁路漏了")
+	}
+	if err := s.Issue(ctx, "13900009999", "OTHER", "1.2.3.4"); err == nil {
+		t.Error("普通号码不受 60 秒限流了")
+	}
+}

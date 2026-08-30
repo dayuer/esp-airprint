@@ -54,6 +54,12 @@ type env struct {
 // 固定端口会让并行测试互相打架。
 func startServer(t *testing.T) *env {
 	t.Helper()
+	return startServerWithDevLogin(t, "", "")
+}
+
+// startServerWithDevLogin 同上，另开固定手机号旁路（devPhone 为空则不开）。
+func startServerWithDevLogin(t *testing.T, devPhone, devCode string) *env {
+	t.Helper()
 	dir := t.TempDir()
 	certDir := filepath.Join(dir, "certs")
 	if err := os.MkdirAll(certDir, 0o755); err != nil {
@@ -83,6 +89,10 @@ func startServer(t *testing.T) *env {
 	}
 	sender := &fakeSender{}
 	v := auth.NewVerifier(st)
+	smsSvc := auth.NewSMS(st, sender, time.Now)
+	if devPhone != "" {
+		smsSvc.SetDevLogin(pb.HMAC(devPhone), devCode)
+	}
 	mem := broker.NewMembership(st)
 	reloader, err := tlsx.New(cfg.CertPath(), cfg.KeyPath())
 	if err != nil {
@@ -106,7 +116,7 @@ func startServer(t *testing.T) *env {
 	}
 	t.Cleanup(func() { br.Close() })
 
-	api := httpapi.New(cfg, st, v, pb, auth.NewSMS(st, sender, time.Now), reg, mem)
+	api := httpapi.New(cfg, st, v, pb, smsSvc, reg, mem, br)
 	ln, err := tls.Listen("tcp", freeAddr(t), reloader.Config())
 	if err != nil {
 		t.Fatal(err)
@@ -195,8 +205,23 @@ func (e *env) login(phone string) string {
 		map[string]string{"Content-Type": "application/json"}); code != 200 {
 		e.t.Fatalf("发码 = %d %s", code, b)
 	}
+	return e.verify(phone, e.sender.last)
+}
+
+// loginWithCode 用已知验证码登录，给固定手机号用。
+func (e *env) loginWithCode(phone, code string) string {
+	e.t.Helper()
+	if st, b := e.req("POST", "/api/auth/sms", `{"phone":"`+phone+`"}`,
+		map[string]string{"Content-Type": "application/json"}); st != 200 {
+		e.t.Fatalf("发码 = %d %s", st, b)
+	}
+	return e.verify(phone, code)
+}
+
+func (e *env) verify(phone, verifyCode string) string {
+	e.t.Helper()
 	code, b := e.req("POST", "/api/auth/verify",
-		fmt.Sprintf(`{"phone":"%s","code":"%s","device":"itest"}`, phone, e.sender.last),
+		fmt.Sprintf(`{"phone":"%s","code":"%s","device":"itest"}`, phone, verifyCode),
 		map[string]string{"Content-Type": "application/json"})
 	if code != 200 {
 		e.t.Fatalf("登录 = %d %s", code, b)
@@ -267,10 +292,11 @@ func (e *env) waitJobState(jid, want string, d time.Duration) {
 // —— 设备侧（用 paho 当假固件）——
 
 type fakeDevice struct {
-	t    *testing.T
-	c    paho.Client
-	dev  string
-	jobs chan jobSignal
+	t        *testing.T
+	c        paho.Client
+	dev      string
+	jobs     chan jobSignal
+	profiles chan []byte
 }
 
 type jobSignal struct {
@@ -297,10 +323,19 @@ func (e *env) tryConnectDevice(dev, key string) (*fakeDevice, error) {
 		SetConnectTimeout(5 * time.Second).
 		SetAutoReconnect(false)
 
-	fd := &fakeDevice{t: e.t, dev: dev, jobs: make(chan jobSignal, 8)}
+	fd := &fakeDevice{t: e.t, dev: dev,
+		jobs: make(chan jobSignal, 8), profiles: make(chan []byte, 8)}
 	opts.SetDefaultPublishHandler(func(_ paho.Client, m paho.Message) {
+		payload := append([]byte(nil), m.Payload()...)
+		if strings.HasSuffix(m.Topic(), "/profile") {
+			select {
+			case fd.profiles <- payload:
+			default:
+			}
+			return
+		}
 		var js jobSignal
-		if json.Unmarshal(m.Payload(), &js) == nil {
+		if json.Unmarshal(payload, &js) == nil {
 			select {
 			case fd.jobs <- js:
 			default:
@@ -314,8 +349,10 @@ func (e *env) tryConnectDevice(dev, key string) (*fakeDevice, error) {
 	}
 	fd.c = c
 	e.t.Cleanup(func() { c.Disconnect(100) })
-	if err := fd.subscribe("printer/" + dev + "/job"); err != nil {
-		return nil, err
+	for _, leaf := range []string{"/job", "/profile"} {
+		if err := fd.subscribe("printer/" + dev + leaf); err != nil {
+			return nil, err
+		}
 	}
 	return fd, nil
 }
@@ -351,6 +388,17 @@ func (d *fakeDevice) heartbeat(state, job, serial string) {
 	tok := d.c.Publish("printer/"+d.dev+"/status", 1, false, payload)
 	if !tok.WaitTimeout(5*time.Second) || tok.Error() != nil {
 		d.t.Fatalf("心跳发送失败：%v", tok.Error())
+	}
+}
+
+func (d *fakeDevice) waitProfile(timeout time.Duration) []byte {
+	d.t.Helper()
+	select {
+	case b := <-d.profiles:
+		return b
+	case <-time.After(timeout):
+		d.t.Fatal("没有收到怪癖档案")
+		return nil
 	}
 }
 

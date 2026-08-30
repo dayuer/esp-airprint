@@ -160,5 +160,6 @@ func (a *API) handleIdent(w http.ResponseWriter, r *http.Request, id auth.Identi
 		fail(w, 500, "server error", "")
 		return
 	}
+	a.onIdent(dev, raw)
 	writeJSON(w, 200, map[string]int{"ok": 1})
 }

@@ -77,6 +77,12 @@ func serve(cfg *config.Config) error {
 	v := auth.NewVerifier(st)
 	mem := broker.NewMembership(st)
 	smsSvc := auth.NewSMS(st, sender, time.Now)
+	if cfg.DevLogin.Enabled() {
+		smsSvc.SetDevLogin(pb.HMAC(cfg.DevLogin.Phone), cfg.DevLogin.Code)
+		// 每次启动都喊一遍。后门最危险的形态是「配上去之后没人记得」。
+		slog.Warn("⚠ 固定手机号登录已启用——这是登录后门，生产环境必须移除",
+			"phone", cfg.DevLogin.Phone)
+	}
 
 	reloader, err := tlsx.New(cfg.CertPath(), cfg.KeyPath())
 	if err != nil {
@@ -97,7 +103,7 @@ func serve(cfg *config.Config) error {
 	}
 	pubShim.set(br)
 
-	api := httpapi.New(cfg, st, v, pb, smsSvc, reg, mem)
+	api := httpapi.New(cfg, st, v, pb, smsSvc, reg, mem, br)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           api.Handler(),

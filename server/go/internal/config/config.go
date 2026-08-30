@@ -35,7 +35,18 @@ type Config struct {
 	PhoneKey    string `json:"phone_key"`
 
 	SMS SMSConfig `json:"sms"`
+
+	// DevLogin 是开发/测试用的固定手机号：配了之后该号码不发短信，
+	// 直接用固定验证码登录。只对这一个号码生效，其余照常。
+	DevLogin DevLoginConfig `json:"dev_login"`
 }
+
+type DevLoginConfig struct {
+	Phone string `json:"phone"`
+	Code  string `json:"code"`
+}
+
+func (d DevLoginConfig) Enabled() bool { return d.Phone != "" }
 
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -66,6 +77,17 @@ func Load(path string) (*Config, error) {
 	}
 	if c.JobRetainPerDevice < 1 {
 		c.JobRetainPerDevice = 50
+	}
+	if c.DevLogin.Enabled() {
+		if len(c.DevLogin.Code) != 6 {
+			return nil, errors.New("config: dev_login.code 必须是 6 位")
+		}
+		// 这是一个登录后门。真接了短信服务商就说明是生产环境，
+		// 此时还留着后门是配置事故——宁可起不来，也不能带着它上线。
+		if c.SMS.Provider != "" && c.SMS.AccessKeyID != "" {
+			return nil, errors.New(
+				"config: dev_login 与 sms 不能同时配置——那是把测试后门带上了生产")
+		}
 	}
 	return &c, nil
 }

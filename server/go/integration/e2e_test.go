@@ -3,6 +3,8 @@ package integration
 import (
 	"testing"
 	"time"
+
+	"github.com/dayuer/esp-airprint/server/go/internal/profile"
 )
 
 // 完整链路：登录 → enroll → 上传 URF → 派发信令 → 设备取件 → 回执。
@@ -115,5 +117,58 @@ func TestEndToEndRejectsMismatchedUsername(t *testing.T) {
 	devKey := e.enroll(token, "f412fa87c9e0")
 	if _, err := e.tryConnectDevice("aaaaaaaaaaaa", devKey); err == nil {
 		t.Error("用别的 username 拿着 A 的密钥连上了")
+	}
+}
+
+// 插上打印机 → 上报机型档案 → 服务端建档 → 下发怪癖档案。
+//
+// 那 9 个字节的 UEL 现在住在 profile 里，不在固件里——这条链路通了，
+// 新机型的新怪癖才能改服务端一行文本就生效。
+func TestEndToEndProfileDelivery(t *testing.T) {
+	e := startServer(t)
+	token := e.login("13800008888")
+	devKey := e.enroll(token, "f412fa87c9e0")
+	dev := e.connectDevice("f412fa87c9e0", devKey)
+	dev.heartbeat("ready", "", "CNB9K1P2X4")
+
+	body := `{"serial":"CNB9K1P2X4","vid":"03F0","pid":"F22A","make":"HP",` +
+		`"model":"HP Laser MFP 136a","cmd":"URF,PCL,PJL,PWGRaster",` +
+		`"urf_caps":"CP1,RS600,V1.4,W8"}`
+	code, resp := e.req("POST", "/api/device/f412fa87c9e0/ident", body,
+		map[string]string{"Content-Type": "application/json",
+			"Authorization": "Bearer " + devKey})
+	if code != 200 {
+		t.Fatalf("上报 = %d %s", code, resp)
+	}
+
+	got := dev.waitProfile(5 * time.Second)
+	p, err := profile.Unmarshal(got)
+	if err != nil {
+		t.Fatalf("下发的档案不是合法 JSON：%v", err)
+	}
+	if p.Serial != "CNB9K1P2X4" {
+		t.Errorf("档案 serial = %q", p.Serial)
+	}
+	if len(p.Hooks.JobEnd) != 1 || p.Hooks.JobEnd[0].Data != profile.UEL {
+		t.Errorf("默认档案没发 UEL：%+v", p.Hooks.JobEnd)
+	}
+	if len(got) > profile.MaxBytes {
+		t.Errorf("档案 %d 字节，超过上限 %d", len(got), profile.MaxBytes)
+	}
+}
+
+// 固定手机号：不发短信也能登录，测试链路不依赖短信服务商。
+func TestEndToEndDevLogin(t *testing.T) {
+	e := startServerWithDevLogin(t, "13800000000", "424242")
+	token := e.loginWithCode("13800000000", "424242")
+	if token == "" {
+		t.Fatal("固定手机号登录失败")
+	}
+	if e.sender.last != "" {
+		t.Errorf("固定号码发了真短信：%q", e.sender.last)
+	}
+	// 连续登录不该被 60 秒闸挡住
+	if e.loginWithCode("13800000000", "424242") == "" {
+		t.Error("连续登录被限流了，测试没法用")
 	}
 }

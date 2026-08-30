@@ -61,6 +61,37 @@ CREATE TABLE IF NOT EXISTS user_phones(
   updated   INTEGER NOT NULL DEFAULT 0
 );
 
+-- 见过的打印机，按序列号唯一。
+-- 序列号标识的是打印机，MAC 标识的是桥——混用就分不开
+-- 「同一个桥换了打印机」和「同一台打印机换了桥」。
+CREATE TABLE IF NOT EXISTS printers(
+  serial     TEXT PRIMARY KEY,
+  vid        TEXT NOT NULL DEFAULT '',
+  pid        TEXT NOT NULL DEFAULT '',
+  make       TEXT NOT NULL DEFAULT '',
+  model      TEXT NOT NULL DEFAULT '',
+  cmd        TEXT NOT NULL DEFAULT '',
+  urf_caps   TEXT NOT NULL DEFAULT '',
+  last_dev   TEXT NOT NULL DEFAULT '',
+  first_seen INTEGER NOT NULL DEFAULT 0,
+  last_seen  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS printers_dev ON printers(last_dev);
+
+-- 生效档案。scope 决定匹配方式：serial 是某一台，model 是某个机型。
+CREATE TABLE IF NOT EXISTS profiles(
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope      TEXT NOT NULL,
+  match      TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  margins_mm TEXT NOT NULL DEFAULT '',
+  votes      INTEGER NOT NULL DEFAULT 0,
+  disputed   INTEGER NOT NULL DEFAULT 0,
+  pinned     INTEGER NOT NULL DEFAULT 0,
+  updated    INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(scope, match)
+);
+
 CREATE TABLE IF NOT EXISTS sms_codes(
   phone_hmac TEXT PRIMARY KEY,
   code_hash  TEXT NOT NULL,

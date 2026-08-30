@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/dayuer/esp-airprint/server/go/internal/auth"
+	"github.com/dayuer/esp-airprint/server/go/internal/profile"
 	"github.com/dayuer/esp-airprint/server/go/internal/raster"
 )
 
@@ -200,4 +201,42 @@ func (a *API) loadIdentCaps(dev string) (caps, serial string, ok bool) {
 		serial = doc.Printer.Serial
 	}
 	return caps, serial, caps != ""
+}
+
+// handlePrinter 返回当前插着的打印机的完整信息与生效档案。
+// App 用它告诉用户「这台打印机是什么、当前配置可信到什么程度」。
+func (a *API) handlePrinter(w http.ResponseWriter, r *http.Request, id auth.Identity) {
+	dev := r.PathValue("dev")
+	if !a.ownDevice(id, dev) {
+		fail(w, 403, "forbidden", "")
+		return
+	}
+	serial := ""
+	if act := a.reg.Actor(dev); act != nil {
+		serial = act.Serial()
+	}
+	if serial == "" {
+		// 设备不在线或没插打印机时，退回它最近插过的那台
+		list, err := a.store.PrintersOfDevice(dev)
+		if err != nil {
+			fail(w, 500, "server error", "")
+			return
+		}
+		if len(list) == 0 {
+			fail(w, 404, "no printer", "该设备尚未上报过机型档案")
+			return
+		}
+		serial = list[0].Serial
+	}
+	p, ok, err := a.store.GetPrinter(serial)
+	if err != nil {
+		fail(w, 500, "server error", "")
+		return
+	}
+	if !ok {
+		fail(w, 404, "no printer", "")
+		return
+	}
+	prof := profile.Lookup(a.store, p.Serial, p.VID, p.PID, p.Model)
+	writeJSON(w, 200, map[string]any{"printer": p, "profile": prof})
 }

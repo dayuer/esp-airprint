@@ -48,6 +48,23 @@ type SMS struct {
 
 	mu sync.Mutex
 	ip map[string][]time.Time // IP → 最近一小时的发送时刻
+
+	// devHMAC / devCode 是开发用固定号码的旁路。见 SetDevLogin。
+	devHMAC string
+	devCode string
+}
+
+// SetDevLogin 开启固定手机号旁路：该号码不发短信、不受限流，
+// 验证码恒为 code。**只对这一个号码生效。**
+//
+// 走的仍是同一条存取路径（写进 sms_codes、Verify 不变），
+// 只有「验证码从哪来」和「要不要限流」两处不同——旁路越窄越不容易出事。
+func (s *SMS) SetDevLogin(phoneHMAC, code string) {
+	s.devHMAC, s.devCode = phoneHMAC, code
+}
+
+func (s *SMS) isDev(phoneHMAC string) bool {
+	return s.devHMAC != "" && phoneHMAC == s.devHMAC
 }
 
 func NewSMS(st SMSStore, sender Sender, now func() time.Time) *SMS {
@@ -60,6 +77,17 @@ func NewSMS(st SMSStore, sender Sender, now func() time.Time) *SMS {
 // Issue 发一条验证码。四道闸按「先便宜后昂贵」的顺序查：
 // 内存里的 IP 计数最便宜，真发短信最贵。
 func (s *SMS) Issue(ctx context.Context, phone, phoneHMAC, ip string) error {
+	if s.isDev(phoneHMAC) {
+		// 固定号码：写进同一张表，但不发短信、不计限流。
+		// 测试要能连续登录，卡 60 秒就没法用了。
+		return s.st.PutSMSCode(store.SMSCode{
+			PhoneHMAC: phoneHMAC,
+			CodeHash:  hashCode(s.devCode),
+			Expires:   s.now().Add(codeTTL).Unix(),
+			SentAt:    0,
+			DayStart:  s.now().Unix(),
+		})
+	}
 	if err := s.checkIP(ip); err != nil {
 		return err
 	}

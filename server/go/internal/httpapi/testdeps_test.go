@@ -26,9 +26,18 @@ func (f *fakeSender) Send(ctx context.Context, phone, code string) error {
 	return nil
 }
 
-type nopPub struct{}
+// recPub 记下下发过的档案，测试据此断言。
+type recPub struct{ profiles map[string][]byte }
 
-func (nopPub) PublishJob(dev, job string, size int64) error { return nil }
+func (p *recPub) PublishJob(dev, job string, size int64) error { return nil }
+
+func (p *recPub) PublishProfile(dev string, body []byte) error {
+	if p.profiles == nil {
+		p.profiles = map[string][]byte{}
+	}
+	p.profiles[dev] = body
+	return nil
+}
 
 type nopMem struct{}
 
@@ -41,6 +50,7 @@ type testDeps struct {
 	reg    *registry.Registry
 	v      *auth.Verifier
 	cfg    *config.Config
+	pub    *recPub
 	clock  time.Time
 }
 
@@ -61,7 +71,8 @@ func newTestAPI(t *testing.T) (http.Handler, *testDeps) {
 	dep := &testDeps{store: st, phone: pb, sender: &fakeSender{},
 		clock: time.Unix(1_000_000, 0)}
 	sms := auth.NewSMS(st, dep.sender, func() time.Time { return dep.clock })
-	reg := registry.New(st, nopPub{}, device.Options{
+	dep.pub = &recPub{}
+	reg := registry.New(st, dep.pub, device.Options{
 		JobTimeout: 180 * time.Second, IdleTimeout: time.Hour,
 	})
 	t.Cleanup(reg.Shutdown)
@@ -75,7 +86,7 @@ func newTestAPI(t *testing.T) (http.Handler, *testDeps) {
 		}
 	}
 	dep.cfg = cfg
-	return New(cfg, st, dep.v, pb, sms, reg, nopMem{}).Handler(), dep
+	return New(cfg, st, dep.v, pb, sms, reg, nopMem{}, dep.pub).Handler(), dep
 }
 
 // —— 请求辅助 ——

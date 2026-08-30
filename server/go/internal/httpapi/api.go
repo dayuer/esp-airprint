@@ -23,6 +23,11 @@ type Invalidator interface {
 	Invalidate(userID string)
 }
 
+// Publisher 是 httpapi 对 MQTT 的窄依赖：只用来下发怪癖档案。
+type Publisher interface {
+	PublishProfile(dev string, profile []byte) error
+}
+
 type API struct {
 	cfg   *config.Config
 	store *store.Store
@@ -31,11 +36,13 @@ type API struct {
 	sms   *auth.SMS
 	reg   *registry.Registry
 	mem   Invalidator
+	pub   Publisher
 }
 
 func New(cfg *config.Config, st *store.Store, v *auth.Verifier, pb *auth.PhoneBox,
-	sms *auth.SMS, reg *registry.Registry, mem Invalidator) *API {
-	return &API{cfg: cfg, store: st, v: v, phone: pb, sms: sms, reg: reg, mem: mem}
+	sms *auth.SMS, reg *registry.Registry, mem Invalidator, pub Publisher) *API {
+	return &API{cfg: cfg, store: st, v: v, phone: pb, sms: sms,
+		reg: reg, mem: mem, pub: pub}
 }
 
 func (a *API) Handler() http.Handler {
@@ -53,6 +60,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /api/print", a.requireApp(a.handlePrint))
 	mux.Handle("GET /api/device/{dev}/render-profile", a.requireApp(a.handleRenderProfile))
 	mux.Handle("GET /api/device/{dev}/printers", a.requireApp(a.handlePrinters))
+	mux.Handle("GET /api/device/{dev}/printer", a.requireApp(a.handlePrinter))
 
 	// device 角色
 	mux.Handle("GET /api/job/{id}/data", a.requireDevice(a.handleJobData))

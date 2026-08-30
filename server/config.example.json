@@ -12,6 +12,12 @@
   "_comment_key": "AES-256-GCM 密钥，64 位 hex。换了它旧的加密号码解不开，但登录不受影响。",
   "phone_key": "改成 32 字节随机值的 hex",
 
+  "_comment_dev_login": "开发/测试用固定手机号：配了之后该号码不发短信，用固定验证码登录。只对这一个号码生效。与 sms 同时配置会拒绝启动——那是把测试后门带上了生产。",
+  "dev_login": {
+    "phone": "",
+    "code": ""
+  },
+
   "sms": {
     "provider": "aliyun",
     "access_key_id": "",
