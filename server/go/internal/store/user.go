@@ -217,6 +217,18 @@ func (s *Store) BumpSMSAttempts(phoneHMAC string) error {
 	return err
 }
 
+// ConsumeSMSCode 在校验成功后作废验证码，但**保留限流计数器**。
+//
+// 不能直接删整行：sent_at 和 day_count 一起没了，用户登录一次就能重置
+// 每日 10 条的上限，反复登录反复刷，闸二形同虚设。
+func (s *Store) ConsumeSMSCode(phoneHMAC string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	_, err := s.db.Exec(
+		`UPDATE sms_codes SET code_hash='', expires=0 WHERE phone_hmac=?`, phoneHMAC)
+	return err
+}
+
 func (s *Store) DeleteSMSCode(phoneHMAC string) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()

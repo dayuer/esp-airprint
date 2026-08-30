@@ -38,7 +38,7 @@ type SMSStore interface {
 	SMSCode(phoneHMAC string) (store.SMSCode, bool, error)
 	PutSMSCode(c store.SMSCode) error
 	BumpSMSAttempts(phoneHMAC string) error
-	DeleteSMSCode(phoneHMAC string) error
+	ConsumeSMSCode(phoneHMAC string) error
 }
 
 type SMS struct {
@@ -112,7 +112,7 @@ func (s *SMS) Verify(phoneHMAC, code string) error {
 		s.st.BumpSMSAttempts(phoneHMAC)
 		return ErrBadCode
 	}
-	return s.st.DeleteSMSCode(phoneHMAC)
+	return s.st.ConsumeSMSCode(phoneHMAC)
 }
 
 func (s *SMS) checkIP(ip string) error {

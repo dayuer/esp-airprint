@@ -143,3 +143,40 @@ func TestRateLimitedDoesNotSend(t *testing.T) {
 		t.Error("被限流了却还是发了短信")
 	}
 }
+
+// 校验成功后必须保留限流计数器。删掉整行的话，用户登录一次就能重置
+// 每日 10 条的上限，反复登录反复刷，闸二形同虚设。
+func TestVerifyKeepsRateLimitCounters(t *testing.T) {
+	s, f, clk := newSMS(t)
+	ctx := context.Background()
+
+	// 发一条、验一条，重复到用满当日 10 条
+	for i := 0; i < 10; i++ {
+		if err := s.Issue(ctx, "13800008888", "H", "1.2.3.4"); err != nil {
+			t.Fatalf("第 %d 条被拒：%v", i+1, err)
+		}
+		if err := s.Verify("H", f.sent[len(f.sent)-1]); err != nil {
+			t.Fatalf("第 %d 次校验失败：%v", i+1, err)
+		}
+		*clk = clk.Add(61 * time.Second)
+	}
+	if err := s.Issue(ctx, "13800008888", "H", "1.2.3.4"); err == nil {
+		t.Error("登录成功清掉了当日计数——第 11 条本该被拒")
+	}
+}
+
+// 作废后同一验证码不能再用（expires 归零挡住它）。
+func TestConsumedCodeCannotBeReused(t *testing.T) {
+	s, f, _ := newSMS(t)
+	s.Issue(context.Background(), "13800008888", "H", "1.2.3.4")
+	code := f.sent[0]
+	if err := s.Verify("H", code); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify("H", code); err == nil {
+		t.Error("作废后仍能再用一次")
+	}
+	if err := s.Verify("H", ""); err == nil {
+		t.Error("空验证码匹配上了被清空的 code_hash")
+	}
+}
