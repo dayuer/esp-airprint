@@ -1,0 +1,25 @@
+[Unit]
+Description=AirPrint 云打印服务（Go）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/airprint/bin/airprintd -conf /opt/airprint/config.json
+Restart=always
+RestartSec=3
+User=airprint
+Group=airprint
+
+# Let's Encrypt 的私钥默认 root-only，部署时把 airprint 加进能读它的组
+ReadWritePaths=/opt/airprint
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# 几万条长连接时 fd 会是第一个瓶颈
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
