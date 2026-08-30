@@ -12,8 +12,11 @@
 import json, os, socket, ssl, struct, subprocess, sys, time, urllib.request
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "mqtt.silkline.id"
-DEV = "f412fa87c9e0"
-SERIAL = "CNB9K1P2X4"
+# 刻意不用真板子的 dev id：两者会抢同一个 MQTT 会话和服务端 actor 状态，
+# 真板子一重连，测试就莫名其妙地收不到派发。联调脚本必须能在真设备在线时
+# 随时跑，所以它自己占一个 id。
+DEV = "aa00bb11cc22"
+SERIAL = "FWTEST-PRINTER-1"
 DECODER = os.environ.get("DECODER", "/tmp/decode_profile")
 API = f"https://{HOST}:9443/api"
 
@@ -217,11 +220,25 @@ res = api("/print", urf, {"Content-Type": "image/urf", "X-Device": DEV,
 check(res.get("state") == "queued", f"作业入队 job={res.get('job')}")
 
 print("5. 收派发信令，按信令取件")
-topic, sig = m.wait("/job")
-check(sig is not None, "收到派发信令")
+# 队列是 FIFO，前面可能还排着别的作业。像真设备那样一件件收，直到轮到我们
+# 这件——写死「第一条就是我的」会在队列非空时假失败。
+sig = None
+for _ in range(10):
+    topic, s2 = m.wait("/job")
+    if s2 is None:
+        break
+    j2 = json.loads(s2)
+    if j2["id"] == res["job"]:
+        sig = s2
+        break
+    # 不是我们这件：取回并回执，把它让过去（一次只派一件，不回执就不会派下一件）
+    api(f"/job/{j2['id']}/data", hdr={"Authorization": "Bearer " + devkey}, raw=True)
+    m.publish(f"printer/{DEV}/status", json.dumps({
+        "dev": DEV, "job": j2["id"], "state": "done", "bytes": j2["size"],
+        "serial": SERIAL}))
+check(sig is not None, "收到自己那件的派发信令")
 if sig:
     j = json.loads(sig)
-    check(j["id"] == res["job"], "派发的正是刚上传那件")
     check(len(sig) < 200, f"信令 {len(sig)} 字节——只传几十字节的信令")
     body = api(f"/job/{j['id']}/data", hdr={"Authorization": "Bearer " + devkey}, raw=True)
     check(len(body) == j["size"], f"取回 {len(body)} 字节，与信令声明一致")
