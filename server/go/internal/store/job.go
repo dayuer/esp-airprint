@@ -6,20 +6,22 @@ import (
 	"time"
 )
 
+// Job 的 JSON 字段名对外可见（GET /api/status），必须与
+// docs/API-cloud-print.md 一致——App 是照那份写的。
 type Job struct {
-	ID    string
-	Dev   string
-	Name  string
-	Size  int64
-	State string
-	Bytes int64
-	Err   string
+	ID    string `json:"id"`
+	Dev   string `json:"-"` // 不外泄：调用方本来就只能查自己的设备
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	State string `json:"state"`
+	Bytes int64  `json:"bytes"`
+	Err   string `json:"err"`
 	// Serial 是这份光栅为哪台打印机生成的。
 	// 派发前必须校验它等于设备当前插着的那台——URF 按特定 dpi 和像素尺寸
 	// 光栅，派给另一台就是一沓废纸，而且没有任何环节会发现。
-	Serial  string
-	Created int64
-	Updated int64
+	Serial  string `json:"serial"`
+	Created int64  `json:"created"`
+	Updated int64  `json:"updated"`
 }
 
 // 作业状态机：queued → downloading → done / failed

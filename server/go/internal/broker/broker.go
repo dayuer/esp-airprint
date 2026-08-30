@@ -51,6 +51,10 @@ type Broker struct {
 
 func New(addr string, tlsCfg *tls.Config, v *auth.Verifier, mem *Membership, r Router) (*Broker, error) {
 	srv := mqtt.New(&mqtt.Options{
+		// 服务端要能直接 Publish 派发信令，这个开关是前提；
+		// 不开的话 Publish 返回「please set Options.InlineClient=true」，
+		// 作业会静默留在队列里。
+		InlineClient: true,
 		// broker 自己的日志走 slog，别另起一套格式
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: slog.LevelWarn,
