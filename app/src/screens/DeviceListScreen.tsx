@@ -4,6 +4,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ApiFailure, DeviceListItem, describeApiError, listDevices} from '../api';
 import {Button} from '../ui/components/Button';
 import {ConnectionLine, LinkBreak} from '../ui/components/ConnectionLine';
+import {Pressable} from '../ui/components/Pressable';
 import {space, type} from '../ui/theme';
 import {useTheme} from '../ui/useTheme';
 import {useSession} from '../auth/context';
@@ -21,7 +22,7 @@ export function linkBreakOf(d: DeviceListItem): LinkBreak {
   return 'none';
 }
 
-function DeviceRow({d}: {d: DeviceListItem}) {
+function DeviceRow({d, onPress}: {d: DeviceListItem; onPress: () => void}) {
   const {c} = useTheme();
   const broken = linkBreakOf(d);
 
@@ -30,12 +31,16 @@ function DeviceRow({d}: {d: DeviceListItem}) {
     : broken === 'printer' ? '没插打印机'
     : d.printer!.model;
 
-  // 现在是静态行，不是 Pressable。设备详情页要到下一阶段才有，一个按下去有
-  // scale 反馈却毫无结果的行是错的；而且 Android 会给首个可聚焦视图画一层
-  // 12% 白的焦点高亮，在这套设计语言里正好读成「一张被选中的卡片」——
-  // 而 DESIGN.md 明说不要卡片。详情页落地时再换回 Pressable。
   return (
-    <View accessible accessibilityLabel={`${d.name}，${status}`} style={styles.row}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${d.name}，${status}`}
+      // 关掉 Android 的默认涟漪与焦点高亮：它是一块 12% 的白/黑，
+      // 在这套设计语言里正好读成「一张被选中的卡片」，而 DESIGN.md 明说不要卡片。
+      // 按压反馈由 Pressable 自己的 scale(0.96) 给。
+      android_ripple={{color: 'transparent', borderless: false}}
+      onPress={onPress}
+      style={styles.row}>
       <View style={styles.rowHead}>
         <Text style={[type.body, styles.name, {color: c.ink}]} numberOfLines={1}>
           {d.name || '未命名设备'}
@@ -59,11 +64,11 @@ function DeviceRow({d}: {d: DeviceListItem}) {
           {broken !== 'none' ? '，接上后自动打印' : ''}
         </Text>
       )}
-    </View>
+    </Pressable>
   );
 }
 
-export function DeviceListScreen() {
+export function DeviceListScreen({onOpen}: {onOpen: (d: DeviceListItem) => void}) {
   const {c} = useTheme();
   const insets = useSafeAreaInsets();
   const session = useSession();
@@ -96,7 +101,7 @@ export function DeviceListScreen() {
       <FlatList
         data={devices ?? []}
         keyExtractor={d => d.dev}
-        renderItem={({item}) => <DeviceRow d={item} />}
+        renderItem={({item}) => <DeviceRow d={item} onPress={() => onOpen(item)} />}
         ItemSeparatorComponent={() => (
           <View style={[styles.rule, {backgroundColor: c.rule}]} />
         )}

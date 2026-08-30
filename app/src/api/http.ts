@@ -13,6 +13,14 @@ export interface ClientConfig {
   /** 一个用户可能有多个桥，得说清楚操作哪一台（文档 4.1）。 */
   device?: DeviceId;
   fetchImpl?: typeof fetch;
+  /**
+   * 收到 401 时调用一次，然后照常抛 ApiFailure。
+   *
+   * token 无过期时间（文档 4.1b），下线只靠吊销——401 是唯一的失效信号，
+   * 所以它必须在 client 边界统一处理。放给每个界面自己判，早晚会漏掉一个，
+   * 用户就卡在一句「登录已失效」上，除了手动退出登录没有别的出路。
+   */
+  onUnauthorized?: () => void;
 }
 
 /** 请求失败时抛这个，body 是已经映射好的 union。 */
@@ -79,6 +87,10 @@ export async function request<T>(cfg: ClientConfig, opts: RequestOptions): Promi
     parsed = undefined;
   }
 
-  if (!res.ok) throw new ApiFailure(apiErrorFromResponse(res.status, parsed));
+  if (!res.ok) {
+    const err = apiErrorFromResponse(res.status, parsed);
+    if (err.kind === 'unauthorized') cfg.onUnauthorized?.();
+    throw new ApiFailure(err);
+  }
   return parsed as T;
 }

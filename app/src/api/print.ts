@@ -72,7 +72,11 @@ export async function submitPrint(
   } catch {
     parsed = undefined;
   }
-  if (!res.ok) throw new ApiFailure(apiErrorFromResponse(res.status, parsed));
+  if (!res.ok) {
+    const err = apiErrorFromResponse(res.status, parsed);
+    if (err.kind === 'unauthorized') cfg.onUnauthorized?.();
+    throw new ApiFailure(err);
+  }
   return parsed as PrintResponse;
 }
 

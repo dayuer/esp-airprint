@@ -16,6 +16,29 @@ import {createState, defaultDevice, makeToken, makeId12, FIXED_CODE} from './sta
 
 const SMS_INTERVAL_MS = 60_000;
 
+/**
+ * 解 RFC 5987 的 ext-value：`UTF-8''%E6%8A%A5%E5%91%8A.pdf` → `报告.pdf`。
+ *
+ * 文档 4.4 说 X-Filename 用 RFC 5987 编码，4.6 的 /api/status 返回的 name 是
+ * 解码后的原文——所以解码这一步在服务端。漏掉的话用户在作业列表里看到的
+ * 就是那一长串百分号。
+ */
+function decodeRfc5987(raw) {
+  if (!raw) return '';
+  const m = /^([A-Za-z0-9-]+)'([^']*)'(.*)$/.exec(raw);
+  if (!m) {
+    // 没按 RFC 5987 编码就原样收下。Node 把 HTTP 头按 latin1 解，
+    // 直接塞 UTF-8 字节进来会变成乱码，这里补一次修正。
+    return Buffer.from(raw, 'latin1').toString('utf8');
+  }
+  const [, charset, , value] = m;
+  const bytes = Buffer.from(
+    value.replace(/%([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))),
+    'latin1',
+  );
+  return bytes.toString(charset.toLowerCase() === 'utf-8' ? 'utf8' : 'latin1');
+}
+
 function normalizePhone(raw) {
   const s = String(raw ?? '').replace(/\s+/g, '').replace(/^\+?86/, '');
   return /^1\d{10}$/.test(s) ? s : null;
@@ -295,11 +318,13 @@ export function createMockServer(state = createState(), opts = {}) {
     if (path === '/api/status' && req.method === 'GET') {
       const {device, error} = ownedDevice(req, userId);
       if (error) return err(res, error[0], error[1]);
+      // created 是秒级的，同一秒入队的作业排序会不确定。用入队序号做次级键——
+      // 真实数据库里对应的是主键。不这么做，「最近作业」的顺序每次刷新都可能变。
       const jobs = [...state.jobs.values()]
         .filter(j => j.dev === device.dev)
-        .sort((a, b) => b.created - a.created)
+        .sort((a, b) => b.created - a.created || b.seq - a.seq)
         .slice(0, 15)
-        .map(({dev: _dev, serial: _serial, ...rest}) => rest);
+        .map(({dev: _dev, serial: _serial, seq: _seq, ...rest}) => rest);
       return send(res, 200, {
         device: {
           dev: device.dev, online: device.online, seen: device.seen,
@@ -338,10 +363,11 @@ export function createMockServer(state = createState(), opts = {}) {
       }
 
       const id = makeId12();
+      state.jobSeq = (state.jobSeq ?? 0) + 1;
       const attached = Boolean(device.printer?.attached) && device.printer.serial === serial;
       state.jobs.set(id, {
-        id, dev: device.dev, serial,
-        name: String(req.headers['x-filename'] ?? ''),
+        id, dev: device.dev, serial, seq: state.jobSeq,
+        name: decodeRfc5987(req.headers['x-filename']),
         size: raw.length, state: 'queued', bytes: 0, err: '',
         created: Math.floor(Date.now() / 1000),
         updated: Math.floor(Date.now() / 1000),

@@ -106,3 +106,24 @@ test('冷却每秒递减到 0 就停住', () => {
   session.getState().tickCooldown();
   expect(session.getState().smsCooldown).toBe(0);
 });
+
+test('任何调用拿到 401 都会让会话作废并回登录页', async () => {
+  const {store, session} = newStore();
+  await session.getState().bootstrap();
+  await session.getState().requestCode('13822223333');
+  await session.getState().submitCode('13822223333', MOCK_CODE);
+  expect(session.getState().phase).toBe('signedIn');
+
+  // 服务端吊销了这把 token（这里用登出模拟），此后任何调用都会 401。
+  const revoked = session.getState().config();
+  await session.getState().signOut();
+  session.setState({token: revoked.token!, phase: 'signedIn'});
+
+  const {listDevices, ApiFailure} = require('../../api') as typeof import('../../api');
+  await expect(listDevices(session.getState().config())).rejects.toBeInstanceOf(ApiFailure);
+
+  // 界面不需要自己判 401——会话已经退回登录态，并带上给用户看的原因。
+  expect(session.getState().phase).toBe('signedOut');
+  expect(session.getState().lastError).toBe('登录已失效，请重新登录');
+  expect(await store.load()).toBeNull();
+});

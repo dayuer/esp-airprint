@@ -28,6 +28,8 @@ export interface SessionActions {
   requestCode(rawPhone: string): Promise<void>;
   submitCode(rawPhone: string, code: string, deviceName?: string): Promise<void>;
   signOut(all?: boolean): Promise<void>;
+  /** token 被服务端吊销了。清本地并回登录页，不再调服务端。 */
+  expire(): void;
   tickCooldown(): void;
   clearError(): void;
   /** 给需要 token 的调用方用。未登录时 token 为 undefined。 */
@@ -50,7 +52,15 @@ export function createSessionStore(deps: SessionDeps) {
     smsCooldown: 0,
     lastError: null,
 
-    config: () => ({baseUrl: deps.baseUrl, token: get().token ?? undefined}),
+    config: () => ({
+      baseUrl: deps.baseUrl,
+      token: get().token ?? undefined,
+      // 任何一个调用拿到 401，整个会话就作废——token 被吊销了，
+      // 别的调用重试也是一样的结果。
+      onUnauthorized: () => {
+        if (get().phase === 'signedIn') get().expire();
+      },
+    }),
 
     async bootstrap() {
       const token = await deps.store.load();
@@ -103,6 +113,12 @@ export function createSessionStore(deps: SessionDeps) {
       }
       await deps.store.clear();
       set({token: null, phoneTail: null, phase: 'signedOut', lastError: null});
+    },
+
+    expire() {
+      // 不调 /auth/logout：token 已经无效，那个请求只会再拿一个 401。
+      void deps.store.clear();
+      set({token: null, phoneTail: null, phase: 'signedOut', lastError: '登录已失效，请重新登录'});
     },
 
     tickCooldown() {

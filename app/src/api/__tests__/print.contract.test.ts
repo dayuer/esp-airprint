@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 import path from 'node:path';
 import {enrollDevice, sendSms, verifySms} from '../auth';
 import {getRenderProfile} from '../devices';
+import {getStatus} from '../jobs';
 import {buildPrintRequest, submitPrint} from '../print';
 import {answerTest, listTests, startTest} from '../tests';
 import {ApiFailure, ClientConfig} from '../http';
@@ -173,4 +174,36 @@ test('unclear 是合法判断——猜出来的数据比没有数据更糟', asy
   expect(a.scope).toBe('serial');
   const tests = await listTests(cfg, DEV);
   expect(tests.find(t => t.id === 'wake')?.state).toBe('unclear');
+});
+
+// ---- 文件名的编解码往返 ----
+
+/**
+ * 上传一份并按作业 ID 取回它的名字。
+ *
+ * 不按列表位置断言：/api/status 按 created 排序，而它是秒级的，
+ * 同一秒入队的作业顺序不确定——那种断言本身就是脆的。
+ */
+async function roundTripName(filename: string): Promise<string> {
+  const r = await submitPrint(cfg, {
+    device: DEV, printerSerial: SERIAL, contentType: 'image/urf', filename,
+  }, realUrf);
+  const s = await getStatus(cfg, DEV);
+  const job = s.jobs.find(j => j.id === r.job);
+  if (!job) throw new Error(`作业 ${r.job} 不在列表里`);
+  return job.name;
+}
+
+// 这是 encodeRfc5987 唯一有意义的验证方式：编码器和一个会解码的服务端对上。
+// 只断言编码器输出的字符串，等于只验证了它和自己的想象一致。
+test('中文文件名上传后在作业列表里显示为原文', async () => {
+  expect(await roundTripName('季度报告.pdf')).toBe('季度报告.pdf');
+});
+
+test('文件名里的空格和引号也要能还原', async () => {
+  expect(await roundTripName('my report".pdf')).toBe('my report".pdf');
+});
+
+test('emoji 文件名走多字节 UTF-8 也能还原', async () => {
+  expect(await roundTripName('🖨️打印.pdf')).toBe('🖨️打印.pdf');
 });
