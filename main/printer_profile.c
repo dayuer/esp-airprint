@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "printer_profile.h"
 #include "usb_quirks_db.h"
+#include <string.h>
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -64,41 +65,90 @@ static uint8_t cups_quirks_lookup(uint16_t vid, uint16_t pid)
  * 调用方拿到的指针在下一次 profile_lookup 之前一直有效。 */
 static printer_profile_t s_active;
 
-/* ── 服务端下发的档案覆盖 ── */
+/* ── 服务端下发的档案：只管存取原始 JSON ── */
 #define NVS_CLOUD "cloud"
 #define NVS_KEY   "profile"
-static profile_override_t s_ovr;
 
-void profile_override_set(const profile_override_t *o)
+void profile_raw_save(const char *json, size_t len)
 {
-    s_ovr = *o;
-    s_ovr.valid = true;
+    if (!json || len == 0 || len > PROF_MAX_JSON) return;
     nvs_handle_t h;
-    if (nvs_open(NVS_CLOUD, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_blob(h, NVS_KEY, &s_ovr, sizeof s_ovr);
-        nvs_commit(h); nvs_close(h);
-    }
-    ESP_LOGI(TAG, "服务端档案已生效 src=%s serial=%s uel=%d wake=%d/%ums "
-                  "cycle=%d unidir=%d",
-             s_ovr.src, s_ovr.serial, s_ovr.uel_job_end, s_ovr.uel_wake,
-             (unsigned)s_ovr.wake_delay_ms, s_ovr.iface_cycle, s_ovr.unidir);
-}
-
-void profile_override_restore(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_CLOUD, NVS_READONLY, &h) != ESP_OK) return;
-    size_t n = sizeof s_ovr;
-    if (nvs_get_blob(h, NVS_KEY, &s_ovr, &n) != ESP_OK || n != sizeof s_ovr)
-        s_ovr.valid = false;
+    if (nvs_open(NVS_CLOUD, NVS_READWRITE, &h) != ESP_OK) return;
+    /* 存成带结尾 0 的字符串，读回来可以直接当 C 串用 */
+    if (nvs_set_blob(h, NVS_KEY, json, len + 1) == ESP_OK) nvs_commit(h);
     nvs_close(h);
-    if (s_ovr.valid)
-        ESP_LOGI(TAG, "从 NVS 恢复服务端档案 src=%s serial=%s",
-                 s_ovr.src, s_ovr.serial);
 }
 
-const printer_profile_t *profile_lookup(uint16_t vid, uint16_t pid,
-                                        const char *serial)
+size_t profile_raw_load(char *out, size_t cap)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_CLOUD, NVS_READONLY, &h) != ESP_OK) return 0;
+    size_t n = cap;
+    esp_err_t e = nvs_get_blob(h, NVS_KEY, out, &n);
+    nvs_close(h);
+    if (e != ESP_OK || n == 0) return 0;
+    out[n - 1] = 0;                 /* 存的时候带了结尾 0，这里兜一下底 */
+    return n - 1;
+}
+
+void profile_raw_clear(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_CLOUD, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_erase_key(h, NVS_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+/* UEL(Universal Exit Language)，HP/三星系的作业分隔符。
+ * 服务端下发的档案里它是一串十六进制；这里是内置兜底用的同一串字节。 */
+static const uint8_t UEL_BYTES[] = { 0x1b, '%', '-', '1', '2', '3', '4', '5', 'X' };
+
+static void push_send(prof_hook_t *h, const uint8_t *d, size_t n)
+{
+    if (h->n >= PROF_MAX_STEPS || n > PROF_MAX_SEND) return;
+    prof_step_t *st = &h->step[h->n++];
+    st->op = PROF_OP_SEND_HEX;
+    memcpy(st->data, d, n);
+    st->len = (uint8_t)n;
+}
+
+static void push_simple(prof_hook_t *h, prof_op_t op, uint16_t ms)
+{
+    if (h->n >= PROF_MAX_STEPS) return;
+    prof_step_t *st = &h->step[h->n++];
+    st->op = op;
+    st->ms = ms;
+}
+
+void profile_script_from_builtin(const printer_profile_t *p, prof_script_t *out)
+{
+    memset(out, 0, sizeof *out);
+    out->valid  = true;
+    out->rev    = 0;                      /* 0 = 不是服务端下发的 */
+    out->unidir = p && p->unidir;
+    out->pjl_ok = !(p && p->unidir);
+    snprintf(out->src, sizeof out->src, "builtin");
+
+    /* 没有档案时按最保守的来：发 UEL。方向永远是「宁可多发 9 个字节，
+     * 也不要打不出来」——不发它只能打第一份，第二份要人去按取消键。 */
+    if (!p || p->uel_job_end)
+        push_send(&out->hook[PROF_HOOK_JOB_END], UEL_BYTES, sizeof UEL_BYTES);
+
+    if (p && p->iface_cycle)
+        push_simple(&out->hook[PROF_HOOK_JOB_BEGIN], PROF_OP_IFACE_RESET, 0);
+
+    if (p && p->uel_wake) {
+        push_send(&out->hook[PROF_HOOK_WAKE], UEL_BYTES, sizeof UEL_BYTES);
+        if (p->wake_delay_ms) {
+            uint32_t ms = p->wake_delay_ms;
+            if (ms > PROF_MAX_DELAY_MS) ms = PROF_MAX_DELAY_MS;
+            push_simple(&out->hook[PROF_HOOK_WAKE], PROF_OP_DELAY_MS, (uint16_t)ms);
+        }
+    }
+}
+
+const printer_profile_t *profile_lookup(uint16_t vid, uint16_t pid)
 {
     size_t n = sizeof PROFILES / sizeof PROFILES[0];
     const printer_profile_t *tpl = &PROFILES[n - 1];   /* 默认通用兜底 */

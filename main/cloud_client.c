@@ -27,6 +27,7 @@
 #include "cloud_client.h"
 #include "provision.h"
 #include "printer_profile.h"
+#include "profile_script.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 
@@ -48,6 +49,12 @@ static char  s_devid[24];
  * 不解析、不截断、**不打进日志**（API 文档第 6 节规则 7）。 */
 static char  s_devkey[80];
 static char  s_bearer[96];      /* "Bearer <token>"，预拼好省得每次拼 */
+/* 心跳里要上报的档案信息：服务端据此知道下发到没到位、
+ * 以及这台设备是不是还没跟上新原语（接口文档 3.6）。 */
+static int   s_profile_rev;
+static char  s_skipped[PROF_MAX_SKIPPED][16];
+static uint8_t s_n_skipped;
+
 static char  s_topic_job[64], s_topic_status[64];
 static char  s_topic_ident[64], s_topic_cmd[64], s_topic_profile[64];
 static QueueHandle_t s_jobq;          /* 收到的作业 id */
@@ -147,6 +154,18 @@ static void report_err(const char *job, const char *state, uint32_t bytes,
         char esc[208];
         jesc(esc, sizeof esc, err);
         n += snprintf(p + n, sizeof p - n, ",\"err\":\"%s\"", esc);
+    }
+    /* 当前生效档案的版本号。服务端拿它核对下发到没到位——对不上就说明
+     * 那份 retain 消息没送达，或者被 serial 校验挡掉了。 */
+    if (s_profile_rev)
+        n += snprintf(p + n, sizeof p - n, ",\"profile_rev\":%d", s_profile_rev);
+    /* 本固件不认识、已跳过的原语。服务端据此知道这台设备还没跟上——
+     * 不上报的话，服务端会以为新原语已经生效，而症状最难归因回这一步。 */
+    if (s_n_skipped) {
+        n += snprintf(p + n, sizeof p - n, ",\"skipped_ops\":[");
+        for (uint8_t i = 0; i < s_n_skipped; i++)
+            n += snprintf(p + n, sizeof p - n, "%s\"%s\"", i ? "," : "", s_skipped[i]);
+        n += snprintf(p + n, sizeof p - n, "]");
     }
     n += snprintf(p + n, sizeof p - n, "}");
     /* 只有 publish 真的成功才算一拍心跳。
@@ -534,28 +553,55 @@ static long jint(const char *s2, const char *key, long dflt)
     return v[0] ? atol(v) : dflt;
 }
 
-/* 套用服务端下发的 USB 层怪癖档案（API 文档 3.7b）。
- * serial 不符就整份忽略——profile 是 retain 消息，用户换了打印机之后
- * 旧档案会先到，套上去就是错的（规则 8）。 */
-static void apply_profile(const char *json)
+/* 套用服务端下发的 USB 层怪癖档案（接口文档 3.7b）。
+ *
+ * 三步：解析校验 → serial 校验 → 落 NVS 并生效。
+ * 任何一步不过就整份丢弃、退回内置兜底——半份 profile 比没有 profile 更危险。 */
+static void apply_profile(const char *json, size_t len)
 {
-    profile_override_t o = { 0 };
-    jget(json, "serial", o.serial, sizeof o.serial);
-    jget(json, "src",    o.src,    sizeof o.src);
-    o.uel_job_end   = jbool(json, "uel_job_end", true);
-    o.uel_wake      = jbool(json, "uel_wake", false);
-    o.iface_cycle   = jbool(json, "iface_cycle", false);
-    o.unidir        = jbool(json, "unidir", false);
-    o.wake_delay_ms = (uint32_t)jint(json, "wake_delay_ms", 0);
-
-    const char *cur = usb_printer_serial();
-    if (o.serial[0] && cur[0] && strcmp(o.serial, cur)) {
-        ESP_LOGW(TAG, "档案是给 %s 的，当前插的是 %s——忽略", o.serial, cur);
+    prof_script_t sc;
+    char err[128];
+    if (!profile_script_parse(json, len, &sc, err, sizeof err)) {
+        ESP_LOGW(TAG, "档案不合法，整份丢弃：%s", err);
         return;
     }
-    profile_override_set(&o);
-    /* 已经枚举过的话立刻重算生效档案；否则枚举时自然会带上 */
-    if (usb_printer_connected()) usb_printer_reselect_profile();
+
+    /* serial 不符就整份忽略——profile 是 retain 消息，用户换了打印机之后
+     * 旧档案会先到，套上去就是错的（规则 8）。 */
+    const char *cur = usb_printer_serial();
+    if (sc.serial[0] && cur[0] && strcmp(sc.serial, cur)) {
+        ESP_LOGW(TAG, "档案是给 %s 的，当前插的是 %s——忽略", sc.serial, cur);
+        return;
+    }
+
+    profile_raw_save(json, len);
+    s_profile_rev = sc.rev;
+    s_n_skipped = sc.n_skipped;
+    for (int i = 0; i < sc.n_skipped && i < PROF_MAX_SKIPPED; i++)
+        snprintf(s_skipped[i], sizeof s_skipped[0], "%s", sc.skipped[i]);
+    if (sc.n_skipped)
+        ESP_LOGW(TAG, "档案里有 %u 个本固件不认识的原语，已跳过并上报",
+                 sc.n_skipped);
+    usb_printer_set_script(&sc);
+}
+
+/* 开机时把上次那份读回来：设备可能在没有网络的情况下先插上打印机开印。 */
+void cloud_profile_restore(void)
+{
+    char buf[PROF_MAX_JSON + 1];
+    size_t n = profile_raw_load(buf, sizeof buf);
+    if (!n) return;
+    prof_script_t sc;
+    char err[128];
+    if (!profile_script_parse(buf, n, &sc, err, sizeof err)) {
+        /* 存档解析不了就清掉，免得每次开机都再失败一遍 */
+        ESP_LOGW(TAG, "NVS 里的档案解析失败，已清除：%s", err);
+        profile_raw_clear();
+        return;
+    }
+    s_profile_rev = sc.rev;
+    ESP_LOGI(TAG, "从 NVS 恢复档案 src=%s rev=%d serial=%s", sc.src, sc.rev, sc.serial);
+    usb_printer_set_script(&sc);
 }
 
 static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -601,7 +647,7 @@ static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
         }
         if (is_topic(s_topic_profile)) {
             ESP_LOGI(TAG, "收到服务端档案: %s", buf);
-            apply_profile(buf);
+            apply_profile(buf, strlen(buf));
             break;
         }
         if (is_topic(s_topic_cmd)) {
@@ -622,16 +668,12 @@ static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
         jget(buf, "size", sz, sizeof sz);
         j.size = (uint32_t)atoi(sz);
         if (j.id[0]) {
-            /* 作业级一次性怪癖覆盖（API 文档 3.4）。只对本次生效，
-             * 不落 NVS，作业结束由 usb_printer 自己销毁。 */
-            const char *q = strstr(buf, "\"quirks\"");
-            if (q) {
-                usb_printer_job_quirks(
-                    strstr(q, "uel_job_end")   ? jbool(q, "uel_job_end", true) : -1,
-                    strstr(q, "uel_wake")      ? jbool(q, "uel_wake", false)   : -1,
-                    strstr(q, "iface_cycle")   ? jbool(q, "iface_cycle", false): -1,
-                    strstr(q, "wake_delay_ms") ? jint(q, "wake_delay_ms", 0)   : -1);
-            }
+            /* 作业级一次性钩子覆盖（接口文档 3.4）。只对本次生效，
+             * 不落 NVS，作业结束由 usb_printer 自己销毁。
+             * 空数组是有意义的：{"job_end":[]} 就是「本次不发作业结束符」，
+             * 适配测试靠它试变体。 */
+            if (strstr(buf, "\"hooks\""))
+                usb_printer_job_hooks(buf, strlen(buf));
             joblog_phase(JOB_RECEIVED, 0, j.size);
             if (xQueueSend(s_jobq, &j, 0) != pdTRUE)
                 report(j.id, "busy", 0);

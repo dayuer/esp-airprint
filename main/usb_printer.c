@@ -15,6 +15,7 @@
 #include "lcd_ui.h"
 #include "joblog.h"
 #include "printer_profile.h"
+#include "profile_script.h"
 #include "cloud_client.h"   /* cloud_device_id() */
 #include "driver/gpio.h"
 #include "esp_rom_crc.h"
@@ -103,49 +104,99 @@ static char s_model[64];                  /* 从 device ID 里抠出的 MDL 字�
 static bool s_pjl_ok;                     /* CMD: 授权发 PJL 吗（第 1 层的开关） */
 static char s_serial[48];                 /* 打印机序列号——换机场景的主键 */
 
-/* ── 本次作业的一次性怪癖覆盖（API 文档 3.4 / 规则 9）──
+/* ── 生效档案 ──
+ *
+ * 不管怪癖来自服务端下发还是编译进来的内置表，这里都只认 prof_script_t：
+ * 内置表由 profile_script_from_builtin() 合成成同一种动作序列。
+ * 执行路径只有一条，不用维护「有服务端档案」和「没有」两套分支。 */
+static prof_script_t s_script;
+
+/* ── 本次作业的一次性钩子覆盖（接口文档 3.4 / 规则 9）──
  * 服务端做适配测试时会试「不发 UEL 会怎样」。**只对本次作业生效，
  * 绝不写 NVS**；作业一结束就销毁，失败也要销毁——残留会把设备留在
- * 坏状态，用户测一次就再也打不了印。
- * -1 = 本次没指定，用档案里的值。 */
-static struct {
-    int  uel_job_end, uel_wake, iface_cycle;
-    long wake_delay_ms;
-} s_oneshot = { -1, -1, -1, -1 };
+ * 坏状态，用户测一次就再也打不了印。 */
+static prof_script_t s_oneshot;
+static bool          s_have_oneshot;
+
+void usb_printer_set_script(const prof_script_t *sc)
+{
+    s_script = *sc;
+    ESP_LOGI(TAG, "生效档案 src=%s rev=%d serial=%s begin=%u end=%u wake=%u",
+             s_script.src, s_script.rev, s_script.serial,
+             s_script.hook[PROF_HOOK_JOB_BEGIN].n,
+             s_script.hook[PROF_HOOK_JOB_END].n,
+             s_script.hook[PROF_HOOK_WAKE].n);
+}
+
+const prof_script_t *usb_printer_script(void){ return &s_script; }
+
+/* 把内置表合成成脚本装上。枚举时先走这条；服务端的档案到了再覆盖。
+ * 这样即使连不上云端，怪癖照样按编译进来的表生效。 */
+static void apply_builtin_script(void)
+{
+    prof_script_t sc;
+    profile_script_from_builtin(s_prof, &sc);
+    usb_printer_set_script(&sc);
+}
+
+bool usb_printer_job_hooks(const char *json, size_t len)
+{
+    char err[128];
+    if (!profile_script_parse_hooks(json, len, &s_script, &s_oneshot,
+                                    err, sizeof err)) {
+        ESP_LOGW(TAG, "一次性钩子解析失败，本次按档案走：%s", err);
+        s_have_oneshot = false;
+        return false;
+    }
+    s_have_oneshot = true;
+    ESP_LOGW(TAG, "本次作业使用一次性钩子 begin=%u end=%u wake=%u",
+             s_oneshot.hook[PROF_HOOK_JOB_BEGIN].n,
+             s_oneshot.hook[PROF_HOOK_JOB_END].n,
+             s_oneshot.hook[PROF_HOOK_WAKE].n);
+    return true;
+}
 
 static void oneshot_clear(void)
 {
-    if (s_oneshot.uel_job_end >= 0 || s_oneshot.uel_wake >= 0 ||
-        s_oneshot.iface_cycle >= 0 || s_oneshot.wake_delay_ms >= 0)
-        ESP_LOGI(TAG, "一次性 quirks 已销毁，回到档案设定");
-    s_oneshot.uel_job_end = s_oneshot.uel_wake = s_oneshot.iface_cycle = -1;
-    s_oneshot.wake_delay_ms = -1;
+    if (s_have_oneshot) ESP_LOGI(TAG, "一次性钩子已销毁，回到档案设定");
+    s_have_oneshot = false;
 }
 
-void usb_printer_job_quirks(int uel_job_end, int uel_wake,
-                            int iface_cycle, long wake_delay_ms)
+/* 执行一个钩子。
+ *
+ * skip_iface_reset：本次连接的第一份作业跳过接口复位——设备刚枚举完，
+ * 没有上一份作业需要收尾。这保持了改造前的行为。 */
+static void run_hook(prof_hook_id_t hid, bool skip_iface_reset)
 {
-    s_oneshot.uel_job_end   = uel_job_end;
-    s_oneshot.uel_wake      = uel_wake;
-    s_oneshot.iface_cycle   = iface_cycle;
-    s_oneshot.wake_delay_ms = wake_delay_ms;
-    ESP_LOGW(TAG, "本次作业使用一次性 quirks: uel=%d wake=%d cycle=%d delay=%ld",
-             uel_job_end, uel_wake, iface_cycle, wake_delay_ms);
-}
+    const prof_script_t *sc = s_have_oneshot ? &s_oneshot : &s_script;
+    const prof_hook_t *h = &sc->hook[hid];
+    if (!h->n) return;
 
-/* 取生效值：一次性覆盖优先，其次档案 */
-static bool q_uel_job_end(void)
-{ return s_oneshot.uel_job_end >= 0 ? s_oneshot.uel_job_end
-                                    : (!s_prof || s_prof->uel_job_end); }
-static bool q_uel_wake(void)
-{ return s_oneshot.uel_wake >= 0 ? s_oneshot.uel_wake
-                                 : (s_prof && s_prof->uel_wake); }
-static bool q_iface_cycle(void)
-{ return s_oneshot.iface_cycle >= 0 ? s_oneshot.iface_cycle
-                                    : (s_prof && s_prof->iface_cycle); }
-static uint32_t q_wake_delay(void)
-{ return s_oneshot.wake_delay_ms >= 0 ? (uint32_t)s_oneshot.wake_delay_ms
-                                      : (s_prof ? s_prof->wake_delay_ms : 0); }
+    /* 钩子里发的字节不计入作业字节数，便于与源文件核对 */
+    size_t saved = s_job_bytes;
+    for (uint8_t i = 0; i < h->n; i++) {
+        const prof_step_t *st = &h->step[i];
+        switch (st->op) {
+        case PROF_OP_SEND_HEX:
+            if (usb_printer_job_write(st->data, st->len) != ESP_OK)
+                ESP_LOGW(TAG, "%s[%u] send_hex 失败", prof_hook_name(hid), i);
+            break;
+        case PROF_OP_DELAY_MS:
+            vTaskDelay(pdMS_TO_TICKS(st->ms));
+            break;
+        case PROF_OP_IFACE_RESET:
+            if (skip_iface_reset) break;
+            joblog_phase(JOB_RESET_IF, 0, 0);
+            printer_port_status();
+            interface_cycle();
+            break;
+        case PROF_OP_READ_STATUS:
+            printer_port_status();
+            break;
+        }
+    }
+    s_job_bytes = saved;
+}
 
 const char *usb_printer_serial(void){ return s_serial; }
 
@@ -156,7 +207,8 @@ void usb_printer_reselect_profile(void)
     if (!s_connected || !s_dev) return;
     const usb_device_desc_t *dd = NULL;
     if (usb_host_get_device_descriptor(s_dev, &dd) != ESP_OK || !dd) return;
-    s_prof = profile_lookup(dd->idVendor, dd->idProduct, s_serial);
+    s_prof = profile_lookup(dd->idVendor, dd->idProduct);
+    apply_builtin_script();
     if (s_prof->unidir && s_ep_in) {
         ESP_LOGW(TAG, "新档案标记为单向 I/O，停用 IN 端点 0x%02X", s_ep_in);
         s_ep_in = 0;
@@ -271,7 +323,8 @@ static void enum_task(void *a)
 
         /* 选机型档案。以前这里漏了，导致 s_prof 恒为 NULL，
          * uel_wake 和 iface_cycle 两条实测怪癖实际上从未生效过。 */
-        s_prof = profile_lookup(dd->idVendor, dd->idProduct, s_serial);
+        s_prof = profile_lookup(dd->idVendor, dd->idProduct);
+        apply_builtin_script();
 
         /* 单向机器：不能读 bulk IN。把 s_ep_in 清零，status_reader_task
          * 就会自己空转（它开头就检查 !s_ep_in），不必再加一处判断。
@@ -933,22 +986,17 @@ esp_err_t usb_printer_job_begin(void)
     xSemaphoreTake(s_job_mutex, portMAX_DELAY);
     if (!s_connected) { xSemaphoreGive(s_job_mutex); return ESP_ERR_INVALID_STATE; }
 
-    /* 第二份及以后：先给上一份留出打印时间，再重置接口开新作业 */
-    if (s_job_count++ > 0 && q_iface_cycle()) {
-        joblog_phase(JOB_RESET_IF, 0, 0);
-        printer_port_status();
-        interface_cycle();
-    }
+    /* 第一份作业跳过接口复位：设备刚枚举完，没有上一份需要收尾。 */
+    bool first = (s_job_count++ == 0);
+    run_hook(PROF_HOOK_JOB_BEGIN, first);
 
     /* 唤醒：打印机收到数据就会醒（实测发指令后它真的动了）。
      * 注意：GET_PORT_STATUS 测不出休眠——休眠时它照样报 0x18(选中+无错)，
-     * 所以别再写「等状态位变化」的循环，那是空等。发个无害的 UEL 敲门 + 固定延时即可。 */
-    if (s_connected && q_uel_wake()) {
+     * 所以别再写「等状态位变化」的循环，那是空等。档案里的 wake 钩子干这事：
+     * 发个无害的 UEL 敲门 + 固定延时。 */
+    if (s_connected && s_script.hook[PROF_HOOK_WAKE].n) {
         joblog_phase(JOB_WAKING, 0, 0);
-        size_t saved = s_job_bytes;
-        usb_printer_job_write(UEL, UEL_LEN);
-        s_job_bytes = saved;
-        vTaskDelay(pdMS_TO_TICKS(q_wake_delay()));
+        run_hook(PROF_HOOK_WAKE, first);
         lcd_ui_prn("就绪");
     }
 
@@ -1012,14 +1060,9 @@ void usb_printer_job_end(void)
     /* 作业结束信号：USB 短包只表示「传输结束」，不表示「作业结束」。
      * 打印机会一直等后续数据（现象：必须手动按取消键才能打下一份）。
      * HP/三星系的作业分隔符是 UEL —— 驱动都会在作业末尾发它。 */
-    if (s_connected && s_job_bytes > 0 && q_uel_job_end()) {
-        size_t saved = s_job_bytes;
-        joblog_phase(JOB_UEL, saved, saved);
-        if (usb_printer_job_write(UEL, UEL_LEN) == ESP_OK)
-            ESP_LOGI(TAG, "已发送 UEL 作业结束符");
-        else
-            ESP_LOGW(TAG, "UEL 发送失败");
-        s_job_bytes = saved;      /* UEL 不计入作业字节数，便于与源文件核对 */
+    if (s_connected && s_job_bytes > 0) {
+        joblog_phase(JOB_UEL, s_job_bytes, s_job_bytes);
+        run_hook(PROF_HOOK_JOB_END, false);
         s_job_done_us = esp_timer_get_time();
     }
     /* 作业结束后绝不碰端点：此刻最后一个短包可能还没物理发完，

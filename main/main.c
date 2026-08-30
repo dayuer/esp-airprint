@@ -113,7 +113,7 @@ static void services_task(void *arg)
 
     /* 恢复上次服务端下发的 USB 层怪癖档案。放在起云端之前——
      * 打印机枚举可能比 profile 消息先到，先有个正确的起点。 */
-    profile_override_restore();
+    cloud_profile_restore();
 
     /* 本地不再跑 IPP 服务器和 mDNS——那套在这颗芯片上撑不住（mDNS 会被
      * 高频请求饿死、并发连接吃光内存、持续射频负载拖垮供电）。

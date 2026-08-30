@@ -1,6 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+#include "profile_script.h"
 
 /*
  * 打印机档案：把「这台机器怎么伺候」从代码里抽成数据。
@@ -51,26 +54,27 @@ typedef struct {
     uint8_t  cups_quirks;
 } printer_profile_t;
 
-/* ── 服务端下发的档案覆盖（API 文档 3.7b）──
- * 优先级：NVS 里这份 > 内置 printer_profile.c > usb_quirks_db.h。
- * 也就是说编译进固件的那张表从「真相」降级成「连不上服务端时的兜底」。
+/* ── 服务端下发的档案（接口文档 3.7b）──
  *
- * serial 是这份档案对应哪台打印机。**与当前插着的不符时必须忽略**——
- * profile 是 retain 消息，用户换了打印机后旧档案会先到，套上去就是错的。 */
-typedef struct {
-    bool     valid;
-    char     serial[48];
-    char     src[16];          /* serial/model/authoritative/quirks/default */
-    bool     uel_job_end, uel_wake, iface_cycle, unidir;
-    uint32_t wake_delay_ms;
-} profile_override_t;
+ * 优先级：NVS 里这份 > 内置 PROFILES 表 > usb_quirks_db.h。
+ * 编译进固件的那张表因此从「真相」降级为「连不上服务端时的兜底」。
+ *
+ * 存的是**原始 JSON**而不是解析后的结构体：将来服务端加了新原语，
+ * 老固件存下的这份仍能被新固件重新解析出来。结构体一变，NVS 里的旧数据
+ * 就只能丢弃。 */
 
-/* 收到 profile 消息时调：落 NVS 并立即生效 */
-void profile_override_set(const profile_override_t *o);
-/* 开机时调：从 NVS 读回上次的档案 */
-void profile_override_restore(void);
+/* 收到 profile 消息时调：落 NVS。serial 校验由调用方做（它才知道当前插的是谁）。 */
+void profile_raw_save(const char *json, size_t len);
+/* 开机时调：把上次那份读回来。没有则返回 0。 */
+size_t profile_raw_load(char *out, size_t cap);
+/* 清掉存档（解析不通过时用，免得每次开机都再失败一遍） */
+void profile_raw_clear(void);
 
-/* 按 VID/PID 选档案，认不出就返回通用档案。
- * serial 用于匹配服务端档案；传 NULL 或空串表示「不匹配任何 serial 档案」。 */
-const printer_profile_t *profile_lookup(uint16_t vid, uint16_t pid,
-                                        const char *serial);
+/* 把内置档案合成成同一种动作序列。
+ *
+ * 这样执行路径只有一条：不管怪癖是来自服务端还是编译进来的表，
+ * usb_printer.c 都只认 prof_script_t，不需要维护两套分支。 */
+void profile_script_from_builtin(const printer_profile_t *p, prof_script_t *out);
+
+/* 按 VID/PID 选档案，认不出就返回通用档案。 */
+const printer_profile_t *profile_lookup(uint16_t vid, uint16_t pid);

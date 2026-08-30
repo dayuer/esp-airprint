@@ -1,4 +1,5 @@
 #pragma once
+#include "profile_script.h"
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -51,8 +52,14 @@ void usb_printer_reselect_profile(void);
 
 /* 本次作业的一次性怪癖覆盖（API 文档 3.4）。传 -1 表示该项不覆盖。
  * **绝不写 NVS**；作业结束（成功或失败）自动销毁。 */
-void usb_printer_job_quirks(int uel_job_end, int uel_wake,
-                            int iface_cycle, long wake_delay_ms);
+/* 装上生效档案（服务端下发的，或内置表合成的）。 */
+void usb_printer_set_script(const prof_script_t *sc);
+const prof_script_t *usb_printer_script(void);
+
+/* 作业信令里的一次性钩子覆盖（接口文档 3.4 / 规则 9）。
+ * 只对下一份作业生效，作业一结束就销毁，绝不写 NVS。
+ * json 是整条作业信令，函数只看其中的 hooks 段。 */
+bool usb_printer_job_hooks(const char *json, size_t len);
 
 /* 精简机型身份 JSON，格式见 docs/API-cloud-print.md 3.8。
  * 走 MQTT retain=1，**上限 512 字节**；全量档案走 HTTPS，不走这里。 */
