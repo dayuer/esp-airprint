@@ -670,6 +670,15 @@ void cloud_profile_restore(void)
     free(buf); free(sc);
 }
 
+/* 认证被拒后真正把客户端停掉。必须在 MQTT 任务之外调用，见调用处注释。 */
+static void auth_stop_cb(void *arg)
+{
+    if (s_mqtt) {
+        esp_mqtt_client_stop(s_mqtt);
+        ESP_LOGW(TAG, "MQTT 客户端已停止，不再重连");
+    }
+}
+
 static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     esp_mqtt_event_handle_t e = data;
@@ -763,12 +772,23 @@ static void on_mqtt(void *arg, esp_event_base_t base, int32_t id, void *data)
             e->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED &&
             e->error_handle->connect_return_code ==
                 MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
-            s_auth_failed = true;
-            ESP_LOGE(TAG, "云端拒绝认证（密钥错误或已吊销）——停止重连。"
-                          "开机按住 MENU 键清配置后重新配网");
-            lcd_ui_wifi("密钥被拒");
-            lcd_ui_prn("请重新配网");
-            esp_mqtt_client_stop(s_mqtt);
+            if (!s_auth_failed) {
+                s_auth_failed = true;
+                ESP_LOGE(TAG, "云端拒绝认证（密钥错误或已吊销）——停止重连。"
+                              "开机按住 MENU 键清配置后重新配网");
+                lcd_ui_wifi("密钥被拒");
+                lcd_ui_prn("请重新配网");
+                /* 不能在这里直接 esp_mqtt_client_stop()——这个回调跑在 MQTT
+                 * 任务自己身上，ESP-IDF 会拒绝（"Client cannot be stopped from
+                 * MQTT task"），结果就是「停止重连」这句话打了、却没真停，
+                 * 照旧每几秒撞一次服务端。改用一次性定时器，从定时器任务里停。 */
+                esp_timer_handle_t t;
+                const esp_timer_create_args_t a = {
+                    .callback = auth_stop_cb, .name = "mqtt_stop",
+                };
+                if (esp_timer_create(&a, &t) == ESP_OK)
+                    esp_timer_start_once(t, 100 * 1000);   /* 100ms 后 */
+            }
         } else {
             ESP_LOGE(TAG, "MQTT 错误 type=%d",
                      e->error_handle ? e->error_handle->error_type : -1);
