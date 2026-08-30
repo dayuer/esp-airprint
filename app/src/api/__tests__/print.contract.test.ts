@@ -9,7 +9,7 @@ import {getStatus} from '../jobs';
 import {buildPrintRequest, submitPrint} from '../print';
 import {answerTest, listTests, startTest} from '../tests';
 import {ApiFailure, ClientConfig} from '../http';
-import {MOCK_CODE, MockHandle, startMock} from './helpers/mock';
+import {MOCK_CODE, MockHandle, bringOnline, startMock} from './helpers/mock';
 
 const DEV = 'f412fa87c9e0';
 const SERIAL = 'CNB9K1P2X4';
@@ -31,6 +31,7 @@ beforeAll(async () => {
   const {token} = await verifySms(anon, '13800002222', MOCK_CODE);
   cfg = {baseUrl: mock.baseUrl, token, device: DEV};
   await enrollDevice(cfg, DEV, '工位打印机');
+  await bringOnline(mock.baseUrl, token, DEV);
 });
 afterAll(() => mock.stop());
 

@@ -15,7 +15,17 @@ const PROD_API = 'https://mqtt.silkline.id:9443/api';
  * 已经写好并测过（server/go/internal/httpapi/devices_endpoint.go），但那台
  * 机器上跑的还是旧二进制。没部署之前指过去，登录后会看到一个空列表。
  */
-export const API_BASE_URL = __DEV__ ? DEV_API : PROD_API;
+/**
+ * 指真服务端。
+ *
+ * 固件连的是 mqtt.silkline.id 的 MQTT broker，所以**设备密钥必须由那台
+ * 服务器签发**。对着本地 mock enroll 出来的密钥，broker 不认识，设备一连
+ * 就是 CONNACK 0x05「密钥被拒」——mock 上做的一切对板子来说都是空转。
+ *
+ * 已知代价：那台服务器还没部署 GET /api/devices（文档 4.5b，Go 侧实现和
+ * 测试都在仓库里了）。所以设备列表暂时空着，配网和打印不受影响。
+ */
+export const API_BASE_URL = PROD_API;
 
 /**
  * 设备配网门户的地址。

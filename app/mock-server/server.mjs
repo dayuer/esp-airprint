@@ -297,8 +297,14 @@ export function createMockServer(state = createState(), opts = {}) {
     if (m && req.method === 'POST') {
       const {device, error} = ownedDevice(req, userId, m[1]);
       if (error) return err(res, error[0], error[1]);
-      if (typeof body?.online === 'boolean') device.online = body.online;
+      if (typeof body?.online === 'boolean') {
+        device.online = body.online;
+        device.state = body.online ? 'ready' : 'offline';
+        if (body.online) device.seen = Math.floor(Date.now() / 1000);
+      }
+      // printer:true 造「插上了」，printer:null 造「拔掉了」。
       if (body?.printer === null) device.printer = null;
+      else if (body?.printer === true) device.printer = {...device.printerWhenAttached};
       else if (typeof body?.attached === 'boolean' && device.printer)
         device.printer.attached = body.attached;
       if (typeof body?.queued_jobs === 'number') {

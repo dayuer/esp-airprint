@@ -51,3 +51,28 @@ export function startMock(): Promise<MockHandle> {
 
 /** mock 的验证码固定值，对应文档第 7 节「开发环境验证码只打日志」。 */
 export const MOCK_CODE = '123456';
+
+/**
+ * 把一台已 enroll 的设备置成「在线且插着打印机」。
+ *
+ * 这个状态必须**显式造**，不能是 enroll 的副产品：刚绑定的设备从没连过
+ * MQTT、也从没上报过 ident，服务端根本不知道它插的是什么。mock 一度把
+ * online:true 和一台 HP 打印机当默认值，结果 App 里那条连接线对每台设备
+ * 都显示「全通」——而真设备当时连 MQTT 被拒、根本没上线。
+ *
+ * 走的是 mock 的开发专用端点，不在文档的契约里。
+ */
+export async function bringOnline(
+  baseUrl: string,
+  token: string,
+  dev: string,
+): Promise<void> {
+  const call = (body: unknown) =>
+    fetch(`${baseUrl}/dev/device/${dev}/state`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify(body),
+    });
+  await call({online: true});
+  await call({printer: true});
+}

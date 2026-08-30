@@ -9,3 +9,4 @@ export * from './print';
 export * from './tests';
 export {encodeRfc5987} from './rfc5987';
 export * from './profileSrc';
+export * from './deviceList';

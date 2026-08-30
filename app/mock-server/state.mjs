@@ -29,21 +29,35 @@ export function createState() {
 /**
  * 一台设备的默认形态。数值取自文档 4.5 / 4.7 的示例，逐字段抄，
  * 不按 client 的方便改——mock 编得顺手，契约测试就什么都证明不了。
+ *
+ * **刚 enroll 的设备是离线的、没插打印机的。**
+ *
+ * 这里一度默认 online:true 并硬塞一台 HP 打印机，结果 App 里那条连接线
+ * 对每台设备都显示「全通」——而真设备当时连 MQTT 被拒、根本没上线。
+ * 连接线是这个 App 的核心视觉，它显示假状态比不显示更糟：它恰好盖住了
+ * 「设备没连上」这个真信号。
+ *
+ * 真服务端是按 actor 在不在判在线的（handleDevices），mock 照做：
+ * 没有任何东西声称它上线过，它就是离线。要在 UI 上造在线状态，
+ * 用 POST /api/dev/device/{dev}/state。
  */
 export function defaultDevice(dev, name, userId) {
   return {
     dev,
     name,
     user_id: userId,
-    bound: 1756400000,
-    online: true,
-    seen: 1756500000,
-    state: 'ready',
+    bound: Math.floor(Date.now() / 1000),
+    online: false,
+    seen: 0,
+    state: 'offline',
     prn: {
       code: 10001, display: 'Ready', online: true,
       asleep: false, paper_out: false, error: false,
     },
-    printer: {
+    // 没插打印机。设备从没上报过 ident，服务端也就不知道插的是什么。
+    printer: null,
+    // 设备上报 ident 之后打印机长这样。dev 端点用它造「插上了」的状态。
+    printerWhenAttached: {
       serial: 'CNB9K1P2X4', vid: '03F0', pid: 'F22A',
       make: 'HP', model: 'HP Laser MFP 136a',
       cmd: 'URF,PCL,PJL,PWGRaster',

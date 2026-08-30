@@ -5,7 +5,7 @@ import {enrollDevice, sendSms, verifySms} from '../auth';
 import {getPrinter, getRenderProfile, listDevices, listPrinters, unbindDevice} from '../devices';
 import {getStatus} from '../jobs';
 import {ApiFailure, ClientConfig} from '../http';
-import {MOCK_CODE, MockHandle, startMock} from './helpers/mock';
+import {MOCK_CODE, MockHandle, bringOnline, startMock} from './helpers/mock';
 
 const DEV = 'f412fa87c9e0';
 let mock: MockHandle;
@@ -18,8 +18,25 @@ beforeAll(async () => {
   const {token} = await verifySms(anon, '13800001234', MOCK_CODE);
   cfg = {baseUrl: mock.baseUrl, token};
   await enrollDevice(cfg, DEV, '工位打印机');
+  // 在线且插着打印机是要显式造的状态，不是 enroll 的副产品。
+  await bringOnline(mock.baseUrl, token, DEV);
 });
 afterAll(() => mock.stop());
+
+test('刚 enroll 的设备是离线的、没插打印机的', async () => {
+  // 它从没连过 MQTT、也从没上报过 ident——服务端不知道它插的是什么。
+  // 这里如果是「在线 + 有打印机」，App 的连接线就会对每台新设备撒谎。
+  const anon = {baseUrl: mock.baseUrl};
+  await sendSms(anon, '13800007070');
+  const {token} = await verifySms(anon, '13800007070', MOCK_CODE);
+  const c = {baseUrl: mock.baseUrl, token};
+  await enrollDevice(c, '0011deadbeef', '刚绑的');
+
+  const [d] = await listDevices(c);
+  expect(d.online).toBe(false);
+  expect(d.printer).toBeNull();
+  expect(d.state).toBe('offline');
+});
 
 test('一台设备都没有时返回空数组，不是 404', async () => {
   const anon = {baseUrl: mock.baseUrl};
