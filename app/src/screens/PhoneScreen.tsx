@@ -5,7 +5,7 @@ import {Button} from '../ui/components/Button';
 import {Field} from '../ui/components/Field';
 import {space, type} from '../ui/theme';
 import {useTheme} from '../ui/useTheme';
-import {formatPhone, isValidPhone} from '../auth/phone';
+import {formatPhone, isValidPhone, toDigits} from '../auth/phone';
 import {useSession} from '../auth/context';
 
 export function PhoneScreen({onSent}: {onSent: (phone: string) => void}) {
@@ -15,15 +15,16 @@ export function PhoneScreen({onSent}: {onSent: (phone: string) => void}) {
   const {lastError, smsCooldown} = session();
   const {requestCode, clearError} = session.getState();
 
-  const [raw, setRaw] = useState('');
+  // 只存数字。存格式化后的字符串会让原生文本和 JS state 分叉，快速输入时丢字符。
+  const [digits, setDigits] = useState('');
   const [busy, setBusy] = useState(false);
-  const ok = isValidPhone(raw);
+  const ok = isValidPhone(digits);
 
   const submit = async () => {
     setBusy(true);
-    await requestCode(raw);
+    await requestCode(digits);
     setBusy(false);
-    if (!session.getState().lastError) onSent(raw);
+    if (!session.getState().lastError) onSent(digits);
   };
 
   return (
@@ -44,16 +45,15 @@ export function PhoneScreen({onSent}: {onSent: (phone: string) => void}) {
         <View style={styles.form}>
           <Field
             latin
-            value={formatPhone(raw)}
+            value={formatPhone(digits)}
             onChangeText={t => {
-              setRaw(t);
+              setDigits(toDigits(t));
               if (lastError) clearError();
             }}
             placeholder="手机号"
             keyboardType="number-pad"
             textContentType="telephoneNumber"
             autoComplete="tel"
-            maxLength={13}
             accessibilityLabel="手机号"
           />
 

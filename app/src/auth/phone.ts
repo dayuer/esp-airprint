@@ -14,9 +14,22 @@ export function isValidPhone(raw: string): boolean {
   return normalizePhone(raw) !== null;
 }
 
+export const PHONE_DIGITS = 11;
+
+/**
+ * 从任意输入里取出数字，最多 11 位。
+ *
+ * 受控输入的 state 只存它的结果，**不要存格式化后的字符串**——存格式化结果
+ * 再重新格式化，快速输入时原生文本和 JS state 会分叉，字符会丢。
+ * iOS 上用 simctl 注入文本时 11 位只进得去 9 位，就是这么来的。
+ */
+export function toDigits(input: string): string {
+  return input.replace(/\D/g, '').slice(0, PHONE_DIGITS);
+}
+
 /** 显示用：138 0000 8888 */
 export function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 11);
+  const digits = toDigits(raw);
   const parts = [digits.slice(0, 3), digits.slice(3, 7), digits.slice(7, 11)];
   return parts.filter(Boolean).join(' ');
 }

@@ -103,7 +103,9 @@ export function DeviceListScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.inkMuted} />
         }
-        contentContainerStyle={{paddingBottom: insets.bottom + space.xl}}
+        // flexGrow 让空态也撑满，否则内容高度为 0，下拉刷新的手势够不到阈值——
+        // 一个还没配网的用户配完回来就刷不出设备。
+        contentContainerStyle={{flexGrow: 1, paddingBottom: insets.bottom + space.xl}}
         ListHeaderComponent={
           <View style={[styles.header, {paddingTop: insets.top + space.lg}]}>
             <Text style={[type.title, {color: c.ink}]}>我的设备</Text>
